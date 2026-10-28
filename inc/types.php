@@ -105,6 +105,25 @@ function mcc_register_types(): void {
 }
 add_action( 'init', 'mcc_register_types' );
 
+/*
+ * The REST API shows a post's fields to anyone who can read it, but a password-protected post's are hidden until its
+ * password is given (as WordPress does with its content), unless the user can edit it.
+ */
+add_action( 'rest_api_init', function () {
+	foreach ( array_keys( mcc_fields() ) as $post_type ) {
+		add_filter( "rest_prepare_$post_type", function ( $response, $post, $request ) use ( $post_type ) {
+			$locked = '' !== $post->post_password && ! current_user_can( 'edit_post', $post->ID )
+				&& ! hash_equals( $post->post_password, (string) $request['password'] );
+			if ( $locked && isset( $response->data['meta'] ) ) {
+				foreach ( array_keys( mcc_fields( $post_type ) ) as $name ) {
+					unset( $response->data['meta'][ $name ] );
+				}
+			}
+			return $response;
+		}, 10, 3 );
+	}
+} );
+
 function mcc_sanitize( $value, array $f ) {
 	switch ( $f['type'] ) {
 		case 'number':

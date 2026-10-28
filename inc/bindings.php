@@ -25,11 +25,25 @@ add_action( 'init', function () {
 				return null;
 			}
 			$value = mcc_value( $post_id, $key, $format );
-			// Text attributes are put in as HTML (rich text); URLs and alt texts as attribute values, escaped there.
-			return in_array( $attribute, array( 'content', 'caption', 'text' ), true ) ? esc_html( $value ) : $value;
+			// Text attributes are put in as HTML (rich text); URLs and alt texts as attribute values, escaped there, URLs
+			// without unsafe schemes (javascript:…).
+			if ( in_array( $attribute, array( 'content', 'caption', 'text' ), true ) ) {
+				return esc_html( $value );
+			}
+			return in_array( $attribute, array( 'url', 'href', 'src' ), true ) ? esc_url_raw( $value ) : $value;
 		},
 	) );
 } );
+
+// Whether the offset in the markup is inside the value of a URL attribute (href, src…) of a tag.
+function mcc_in_url_attribute( string $html, int $offset ): bool {
+	$before = substr( $html, 0, $offset );
+	$open   = strrpos( $before, '<' );
+	if ( false === $open || ( strrpos( $before, '>' ) ?: -1 ) > $open ) {
+		return false; // in text
+	}
+	return (bool) preg_match( '/\s(?:href|src|srcset|action|formaction|poster|xlink:href|data)\s*=\s*["\']?[^"\'>]*$/i', substr( $before, $open ) );
+}
 
 // The post a block renders for: its context's (inside a loop), else the current post.
 function mcc_context_post( $instance ): int {
@@ -49,14 +63,18 @@ add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 		return $html;
 	}
 	// A token's text: strictly a key and an optional format, else it's left as it was (never decoded into the page).
-	$fill = function ( string $inner ) use ( $post_id ): ?string {
+	// The value is escaped for where the token sits: in a URL attribute (or URL-encoded, so in a URL) as a URL, which
+	// drops unsafe schemes like javascript:; anywhere else as text.
+	$fill = function ( string $inner, bool $url ) use ( $post_id ): ?string {
 		if ( ! preg_match( '/^\s*([a-z0-9_:\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ) {
 			return null;
 		}
 		[ $key, $format ] = mcc_parse_key( $t[1] );
 		$value            = mcc_value( $post_id, $key, $format );
-		return mcc_is_url( $post_id, $key ) ? esc_url( $value ) : esc_html( $value );
+		return $url || mcc_is_url( $post_id, $key ) ? esc_url( $value ) : esc_html( $value );
 	};
-	$html = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => $fill( rawurldecode( $m[1] ) ) ?? $m[0], $html );
-	return preg_replace_callback( '/\{\{(.*?)\}\}/', fn( $m ) => $fill( $m[1] ) ?? $m[0], $html );
+	$html = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => $fill( rawurldecode( $m[1] ), true ) ?? $m[0], $html );
+	return preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $fill, $html ) {
+		return $fill( $m[1][0], mcc_in_url_attribute( $html, $m[0][1] ) ) ?? $m[0][0];
+	}, $html, -1, $count, PREG_OFFSET_CAPTURE );
 }, 20, 3 );
