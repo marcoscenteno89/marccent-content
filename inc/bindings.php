@@ -35,46 +35,52 @@ add_action( 'init', function () {
 	) );
 } );
 
-// Whether the offset in the markup is inside the value of a URL attribute (href, src…) of a tag.
-function mcc_in_url_attribute( string $html, int $offset ): bool {
-	$before = substr( $html, 0, $offset );
-	$open   = strrpos( $before, '<' );
-	if ( false === $open || ( strrpos( $before, '>' ) ?: -1 ) > $open ) {
-		return false; // in text
-	}
-	return (bool) preg_match( '/\s(?:href|src|srcset|action|formaction|poster|xlink:href|data)\s*=\s*["\']?[^"\'>]*$/i', substr( $before, $open ) );
-}
-
 // The post a block renders for: its context's (inside a loop), else the current post.
 function mcc_context_post( $instance ): int {
 	return (int) ( ( $instance instanceof WP_Block ? ( $instance->context['postId'] ?? 0 ) : 0 ) ?: get_the_ID() );
 }
 
 /*
- * {{ tokens }} in a block's markup. A link field saved by the editor may come URL-encoded (%7B%7B link %7D%7D).
- * Values are escaped for where they land: URLs as URLs, the rest as text (safe in text and in attribute values).
+ * {{ tokens }} in a block's markup, in two passes:
+ * - URL attributes (href, src… wp_kses_uri_attributes()), found by WordPress's HTML parser: a token there is a URL,
+ *   so its value goes through esc_url_raw (javascript: and other unsafe schemes are dropped) and the parser escapes
+ *   the attribute. A link the editor saved URL-encoded (%7B%7B link %7D%7D) is read there too.
+ * - Every token left (in text, in other attributes) is the value escaped as text, which is safe in both.
+ * A token is strictly a key and an optional format; anything else between braces is left as it was.
  */
+function mcc_token( string $inner ): ?array {
+	return preg_match( '/^\s*([a-z0-9_:\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
+}
+
 add_filter( 'render_block', function ( $html, $block, $instance = null ) {
-	if ( ! $html || ( ! str_contains( $html, '{{' ) && ! str_contains( $html, '%7B%7B' ) ) ) {
+	if ( ! $html || ( ! str_contains( $html, '{{' ) && false === stripos( $html, '%7B%7B' ) ) ) {
 		return $html;
 	}
 	$post_id = mcc_context_post( $instance );
 	if ( ! $post_id ) {
 		return $html;
 	}
-	// A token's text: strictly a key and an optional format, else it's left as it was (never decoded into the page).
-	// The value is escaped for where the token sits: in a URL attribute (or URL-encoded, so in a URL) as a URL, which
-	// drops unsafe schemes like javascript:; anywhere else as text.
-	$fill = function ( string $inner, bool $url ) use ( $post_id ): ?string {
-		if ( ! preg_match( '/^\s*([a-z0-9_:\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ) {
-			return null;
+
+	$uri  = array_merge( wp_kses_uri_attributes(), array( 'srcset' ) );
+	$tags = new WP_HTML_Tag_Processor( $html );
+	while ( $tags->next_tag() ) {
+		foreach ( $tags->get_attribute_names_with_prefix( '' ) ?? array() as $name ) {
+			$value = $tags->get_attribute( $name );
+			if ( ! is_string( $value ) || ! in_array( $name, $uri, true ) || ( ! str_contains( $value, '{{' ) && false === stripos( $value, '%7B%7B' ) ) ) {
+				continue;
+			}
+			$value = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => '{{' . rawurldecode( $m[1] ) . '}}', $value );
+			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id ) {
+				$token = mcc_token( $m[1] );
+				return $token ? esc_url_raw( mcc_value( $post_id, ...$token ) ) : $m[0];
+			}, $value );
+			$tags->set_attribute( $name, $value );
 		}
-		[ $key, $format ] = mcc_parse_key( $t[1] );
-		$value            = mcc_value( $post_id, $key, $format );
-		return $url || mcc_is_url( $post_id, $key ) ? esc_url( $value ) : esc_html( $value );
-	};
-	$html = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => $fill( rawurldecode( $m[1] ), true ) ?? $m[0], $html );
-	return preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $fill, $html ) {
-		return $fill( $m[1][0], mcc_in_url_attribute( $html, $m[0][1] ) ) ?? $m[0][0];
-	}, $html, -1, $count, PREG_OFFSET_CAPTURE );
+	}
+	$html = $tags->get_updated_html();
+
+	return preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id ) {
+		$token = mcc_token( $m[1] );
+		return $token ? esc_html( mcc_value( $post_id, ...$token ) ) : $m[0];
+	}, $html );
 }, 20, 3 );

@@ -124,13 +124,3 @@ function mcc_format( string $value, string $format ): string {
 			return $value;
 	}
 }
-
-// Whether a key's value is a URL (escaped as one): the link, images and url fields.
-function mcc_is_url( int $post_id, string $key ): bool {
-	$name = explode( ':', $key, 2 )[0];
-	if ( in_array( $name, array( 'link', 'image' ), true ) ) {
-		return true;
-	}
-	$field = mcc_fields( (string) get_post_type( $post_id ) )[ $name ] ?? null;
-	return $field && in_array( $field['type'], array( 'url', 'image' ), true );
-}
