@@ -1,0 +1,22 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "marccent/field",
+	"title": "Field",
+	"category": "marccent",
+	"icon": "database",
+	"description": "One of the post's values: its title, date, excerpt, featured image, terms or a field (price, city…), with a format. In a Loop, the loop's current post.",
+	"keywords": [ "meta", "custom field", "acf", "price", "value" ],
+	"textdomain": "marccent-content",
+	"attributes": {
+		"key": { "type": "string", "default": "title" },
+		"format": { "type": "string", "default": "" },
+		"tag": { "type": "string", "default": "p" },
+		"link": { "type": "boolean", "default": false },
+		"label": { "type": "string", "default": "" }
+	},
+	"usesContext": [ "postId", "postType" ],
+	"supports": { "html": false },
+	"editorScript": "marccent-content-editor",
+	"render": "file:./render.php"
+}

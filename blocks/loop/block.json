@@ -1,0 +1,27 @@
+{
+	"$schema": "https://schemas.wp.org/trunk/block.json",
+	"apiVersion": 3,
+	"name": "marccent/loop",
+	"title": "Loop",
+	"category": "marccent",
+	"icon": "update",
+	"description": "Repeats its item for every post of a type (posts, projects, products…), in the theme's grid. Design the item once with any blocks; show the post's values with Field blocks, {{ tokens }} or block bindings.",
+	"keywords": [ "query", "posts", "list", "grid", "custom post type" ],
+	"textdomain": "marccent-content",
+	"attributes": {
+		"postType": { "type": "string", "default": "post" },
+		"perPage": { "type": "number", "default": 6 },
+		"orderBy": { "type": "string", "default": "date" },
+		"order": { "type": "string", "default": "desc" },
+		"taxonomy": { "type": "string", "default": "" },
+		"terms": { "type": "string", "default": "" },
+		"offset": { "type": "number", "default": 0 },
+		"excludeCurrent": { "type": "boolean", "default": true },
+		"cols": { "type": "number", "default": 3 },
+		"gap": { "type": "string", "default": "" },
+		"empty": { "type": "string", "default": "Nothing here yet." }
+	},
+	"supports": { "html": false },
+	"editorScript": "marccent-content-editor",
+	"render": "file:./render.php"
+}
