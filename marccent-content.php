@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Marccent Content
  * Description: Custom post types, their fields and loops for Marccent sites. Define the types and fields once (Settings → Content), edit the fields beside each post, and design a loop of them in the editor with the Marccent blocks: a Loop block repeats its item for every post, and the item shows the post's fields through the Field block, {{ tokens }} in any block, or block bindings.
- * Version: 0.1.0
+ * Version: 0.1.1
  * Requires at least: 6.9
  * Requires PHP: 8.0
  * Requires Plugins: marccent-blocks

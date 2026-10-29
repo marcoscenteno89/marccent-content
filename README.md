@@ -20,3 +20,8 @@ Custom post types, their fields and loops for Marccent sites, with no build step
 ```
 
 Works with [Marccent Blocks](https://github.com/marcoscenteno89/marccent-blocks). Requires WordPress 6.9+.
+
+## Uninstalling
+
+Deleting the plugin removes its settings (the content types' spec). The posts of those types, their terms and fields
+stay: they're the site's content, and they're back as they were if the plugin is installed again with the same spec.
