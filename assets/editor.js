@@ -92,6 +92,7 @@
 						el( SelectControl, { label: 'Order', value: a.order, options: [ opt( 'Descending', 'desc' ), opt( 'Ascending', 'asc' ) ], onChange: ( order ) => set( { order } ) } ),
 						type.taxonomies.length > 0 && el( SelectControl, { label: 'Only from', value: a.taxonomy, options: [ opt( 'Any', '' ), ...type.taxonomies.map( ( x ) => opt( x.label, x.name ) ) ], onChange: ( taxonomy ) => set( { taxonomy } ) } ),
 						a.taxonomy && el( TextControl, { label: 'Terms', help: 'Their slugs, comma-separated.', value: a.terms, onChange: ( terms ) => set( { terms } ) } ),
+						type.hierarchical && el( TextControl, { label: 'Children of', help: 'A page’s path (services, or about/team): only the pages under it. Empty: all.', value: a.parent, onChange: ( parent ) => set( { parent } ) } ),
 						el( RangeControl, { label: 'Skip', value: a.offset, min: 0, max: 20, onChange: ( offset ) => set( { offset } ) } ),
 						el( ToggleControl, { label: 'Leave out the post being viewed', checked: a.excludeCurrent, onChange: ( excludeCurrent ) => set( { excludeCurrent } ) } ),
 						el( TextControl, { label: 'When there are none', value: a.empty, onChange: ( empty ) => set( { empty } ) } )

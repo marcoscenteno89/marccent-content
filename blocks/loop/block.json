@@ -15,6 +15,7 @@
 		"order": { "type": "string", "default": "desc" },
 		"taxonomy": { "type": "string", "default": "" },
 		"terms": { "type": "string", "default": "" },
+		"parent": { "type": "string", "default": "" },
 		"offset": { "type": "number", "default": 0 },
 		"excludeCurrent": { "type": "boolean", "default": true },
 		"cols": { "type": "number", "default": 3 },

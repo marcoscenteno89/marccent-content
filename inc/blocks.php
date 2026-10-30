@@ -34,6 +34,7 @@ function mcc_editor_data(): array {
 			'name'       => $type->name,
 			'label'      => $type->labels->name,
 			'singular'   => $type->labels->singular_name,
+			'hierarchical' => $type->hierarchical,
 			'taxonomies' => array_values( array_map( fn( $t ) => array( 'name' => $t->name, 'label' => $t->labels->name ), get_object_taxonomies( $type->name, 'objects' ) ) ),
 			'fields'     => (object) mcc_fields( $type->name ),
 		);
@@ -42,9 +43,9 @@ function mcc_editor_data(): array {
 }
 
 /**
- * The Loop's query from its settings: published posts of one type, newest first by default, optionally of some terms
- * and ordered by a field ("field:price"); on a single post, without that post. Only public types, no
- * password-protected posts.
+ * The Loop's query from its settings: published posts of one type, newest first by default, optionally of some terms,
+ * the children of one parent (a hierarchical type's path, "services": its pages) and ordered by a field
+ * ("field:price"); on a single post, without that post. Only public types, no password-protected posts.
  */
 function mcc_loop_query( array $a ): WP_Query {
 	// Only the public types the editor offers; never password-protected posts.
@@ -70,6 +71,10 @@ function mcc_loop_query( array $a ): WP_Query {
 	}
 	if ( $a['excludeCurrent'] && is_singular() ) {
 		$args['post__not_in'] = array( get_queried_object_id() );
+	}
+	if ( '' !== trim( (string) ( $a['parent'] ?? '' ) ) && is_post_type_hierarchical( $a['postType'] ) ) {
+		$parent              = get_page_by_path( trim( $a['parent'], '/ ' ), OBJECT, $a['postType'] );
+		$args['post_parent'] = $parent ? $parent->ID : -1; // no such parent: nothing, not every post
 	}
 	$terms = array_filter( array_map( 'trim', explode( ',', (string) $a['terms'] ) ) );
 	if ( $a['taxonomy'] && $terms ) {

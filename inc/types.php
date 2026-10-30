@@ -21,6 +21,9 @@
  *     "fields": { "post": { "reading_time": { "type": "number", "label": "Reading time", "suffix": " min" } } }
  *   }
  *
+ * A type with "noindex": true keeps its posts out of search results (robots noindex on each one's page), for types
+ * that exist to be shown in loops (gallery photos, team members) rather than read on their own.
+ *
  * Field types: string, text (several lines), number, url, email, date, boolean, image (an attachment), select (with
  * "options": [ "a", "b" ]). A field may have a help line, a prefix and a suffix (shown around its value). Fields are
  * post meta under their own name, in the REST API, so the editor reads and saves them.
@@ -104,6 +107,15 @@ function mcc_register_types(): void {
 	}
 }
 add_action( 'init', 'mcc_register_types' );
+
+add_filter( 'wp_robots', function ( $robots ) {
+	foreach ( mcc_spec()['types'] as $name => $t ) {
+		if ( ! empty( $t['noindex'] ) && is_singular( $name ) ) {
+			return array_merge( $robots, array( 'noindex' => true, 'follow' => true ) );
+		}
+	}
+	return $robots;
+} );
 
 /*
  * The REST API shows a post's fields to anyone who can read it, but a password-protected post's are hidden until its
