@@ -1,7 +1,7 @@
 <?php
 /**
- * The spec: the site's post types, their taxonomies and fields, and fields on types that already exist (post, page).
- * Saved as JSON in the marccent_content option (Settings → Content), or given in code through the
+ * The spec: the site's post types (with their taxonomies) and its field groups, kept in the database (the
+ * marccent_content option), built under Fields → Field groups and Fields → Post types, or given in code through the
  * marccent_content_spec filter. For example:
  *
  *   {
@@ -10,56 +10,309 @@
  *       "project": {
  *         "label": "Projects", "singular": "Project", "icon": "dashicons-portfolio", "slug": "projects",
  *         "supports": [ "title", "editor", "thumbnail", "excerpt" ],
- *         "taxonomies": { "project_service": { "label": "Services", "singular": "Service", "hierarchical": true } },
- *         "fields": {
- *           "city": { "type": "string", "label": "City" },
- *           "year": { "type": "number", "label": "Year" },
- *           "before": { "type": "image", "label": "Before photo" }
- *         }
+ *         "taxonomies": { "project_service": { "label": "Services", "singular": "Service", "hierarchical": true } }
  *       }
  *     },
- *     "fields": { "post": { "reading_time": { "type": "number", "label": "Reading time", "suffix": " min" } } }
+ *     "groups": {
+ *       "project_details": { "label": "Project details", "on": [ "project" ], "fields": { "city": {}, "year": { "type": "number" } } },
+ *       "office": { "label": "Office", "on": [ "options" ], "fields": { "phone": {}, "lat": { "type": "number" } } },
+ *       "photos": { "label": "Photos", "repeat": true, "on": [ "page:gallery" ],
+ *         "fields": { "image": { "type": "image" }, "caption": {}, "service": { "type": "select", "options": [ "a", "b" ] } } }
+ *     }
  *   }
  *
  * A type with "noindex": true keeps its posts out of search results (robots noindex on each one's page), for types
- * that exist to be shown in loops (gallery photos, team members) rather than read on their own.
+ * that exist to be shown in loops rather than read on their own.
  *
- * Field types: string, text (several lines), number, url, email, date, boolean, image (an attachment), select (with
- * "options": [ "a", "b" ]). A field may have a help line, a prefix and a suffix (shown around its value). Fields are
- * post meta under their own name, in the REST API, so the editor reads and saves them.
+ * Field groups, as ACF's: a named set of fields put "on" post types ("page"), on some pages only ("page:contact", by
+ * slug) or on the site ("options": the Site content screen). Field types: string, text (several lines), number, url,
+ * email, date, boolean, image (an attachment), select (with "options": [ "a", "b" ]), relation (another post: "to" its
+ * post type; "multiple": true for several). A field may have a help line, a prefix and a suffix (shown around its value).
+ *
+ * A relation is a foreign key, as Django's: { "account": { "type": "relation", "to": "account" } } on contacts is a
+ * contact's account; with "multiple": true, a many-to-many ("products" on a work order). On posts each related post's
+ * id is a meta row of its own (one for a single one, one per post for several), so a Loop finds the posts that point
+ * to one with an indexed meta query: a contact's account is {{ account.title }}, an account's contacts a Loop of
+ * contacts related by "account" (blocks/loop). In a repeating group's rows, the id (or the list of ids) is in the row.
+ *
+ * Where values are kept: a group on posts, each field as post meta under its own name (in the REST API, so the editor
+ * saves it); with "repeat": true, a list of rows a Loop can repeat its item for, as post meta under the group's name;
+ * a group on the site, the mcc_<group> option. Things without a page of their own (offices, a gallery's photos, the
+ * team) need no post type: a repeating group holds them.
+ *
+ * Older specs put fields straight on types ("types": { "x": { "fields" } }, "fields": { "page": {…} }); they're read
+ * as a group each ("<type>_fields"), which saving the spec writes out.
  */
 
 defined( 'ABSPATH' ) || exit;
 
-const MCC_FIELD_TYPES = array( 'string', 'text', 'number', 'url', 'email', 'date', 'boolean', 'image', 'select' );
+const MCC_FIELD_TYPES = array( 'string', 'text', 'number', 'url', 'email', 'date', 'boolean', 'image', 'select', 'relation' );
+
+// A post's own values (inc/values.php): a field on posts can't have one of these names.
+const MCC_RESERVED = array( 'title', 'excerpt', 'content', 'date', 'modified', 'link', 'id', 'author', 'type', 'image', 'image_alt', 'terms', 'count', 'sum', 'avg', 'min', 'max' );
 
 function mcc_spec(): array {
-	static $spec = null;
-	if ( null === $spec ) {
+	if ( ! isset( $GLOBALS['mcc_cache']['spec'] ) ) {
 		$saved = json_decode( (string) get_option( 'marccent_content', '{}' ), true );
-		$spec  = apply_filters( 'marccent_content_spec', is_array( $saved ) ? $saved : array() );
-		$spec += array( 'types' => array(), 'fields' => array(), 'currency' => '$' );
+		$GLOBALS['mcc_cache']['spec'] = mcc_canonical( apply_filters( 'marccent_content_spec', is_array( $saved ) ? $saved : array() ) );
 	}
-	return $spec;
+	return $GLOBALS['mcc_cache']['spec'];
 }
 
-// Every type's fields by post type: the types' own and those added to existing types.
-function mcc_fields( ?string $post_type = null ): array {
-	$spec   = mcc_spec();
-	$fields = array_map( fn( $t ) => $t['fields'] ?? array(), $spec['types'] );
-	foreach ( $spec['fields'] as $type => $own ) {
-		$fields[ $type ] = array_merge( $fields[ $type ] ?? array(), $own );
+// After the spec changes in this request (saving, importing): read it again.
+function mcc_spec_reset(): void {
+	unset( $GLOBALS['mcc_cache'] );
+}
+
+// The spec in its current shape: types without fields, every field in a group.
+function mcc_canonical( array $spec ): array {
+	$types  = array();
+	$groups = (array) ( $spec['groups'] ?? array() );
+	$legacy = (array) ( $spec['fields'] ?? array() );
+	foreach ( (array) ( $spec['types'] ?? array() ) as $name => $t ) {
+		$t = (array) $t;
+		if ( ! empty( $t['fields'] ) ) {
+			$legacy[ $name ] = array_merge( (array) ( $legacy[ $name ] ?? array() ), (array) $t['fields'] );
+		}
+		unset( $t['fields'] );
+		$types[ $name ] = $t;
 	}
-	foreach ( $fields as $type => &$list ) {
-		foreach ( $list as $name => &$f ) {
-			$f = array_merge( array( 'label' => ucfirst( str_replace( '_', ' ', $name ) ), 'type' => 'string' ), $f );
-			if ( ! in_array( $f['type'], MCC_FIELD_TYPES, true ) ) {
-				$f['type'] = 'string';
+	foreach ( $legacy as $type => $fields ) {
+		$key = "{$type}_fields";
+		while ( isset( $groups[ $key ] ) ) {
+			$key .= '_';
+		}
+		$groups[ $key ] = array( 'label' => ucfirst( str_replace( '_', ' ', $type ) ) . ' fields', 'on' => array( $type ), 'fields' => (array) $fields );
+	}
+	return array( 'currency' => (string) ( $spec['currency'] ?? '$' ), 'types' => $types, 'groups' => $groups );
+}
+
+// Fields with their label and a known type.
+function mcc_normalize_fields( array $list ): array {
+	foreach ( $list as $name => &$f ) {
+		$f = array_merge( array( 'label' => ucfirst( str_replace( '_', ' ', $name ) ), 'type' => 'string' ), (array) $f );
+		if ( ! in_array( $f['type'], MCC_FIELD_TYPES, true ) ) {
+			$f['type'] = 'string';
+		}
+		if ( 'relation' === $f['type'] ) {
+			$f['to']       = (string) ( $f['to'] ?? 'post' );
+			$f['multiple'] = ! empty( $f['multiple'] );
+		}
+	}
+	return $list;
+}
+
+// Several related posts: a meta row each.
+function mcc_is_many( array $f ): bool {
+	return 'relation' === $f['type'] && $f['multiple'];
+}
+
+// A field's meta type: an image or a related post is its id.
+function mcc_meta_type( array $f ): string {
+	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'relation' => 'integer' )[ $f['type'] ] ?? 'string';
+}
+
+// A field's saved value on a post: a list of ids for several related posts.
+function mcc_meta( int $post_id, string $name, array $f ) {
+	return mcc_is_many( $f ) ? array_map( 'intval', get_post_meta( $post_id, $name ) ) : get_post_meta( $post_id, $name, true );
+}
+
+/**
+ * The posts a relation's value points to, in its order: those of its post type that are published and not
+ * password-protected (a deleted or draft one isn't shown, as a broken key).
+ */
+function mcc_related_ids( $raw, array $f ): array {
+	$ids = array_values( array_unique( array_filter( array_map( 'absint', is_array( $raw ) ? $raw : array( $raw ) ) ) ) );
+	if ( count( $ids ) > 1 ) {
+		_prime_post_caches( $ids, false, false ); // one query for those not loaded yet, not one each
+	}
+	return array_values( array_filter( $ids, function ( $id ) use ( $f ) {
+		$post = get_post( $id );
+		return $post && $post->post_type === $f['to'] && 'publish' === $post->post_status && '' === $post->post_password;
+	} ) );
+}
+
+// The field groups, each with its label, whether it repeats, where it's put and its fields.
+function mcc_groups(): array {
+	if ( ! isset( $GLOBALS['mcc_cache']['groups'] ) ) {
+		$groups = array();
+		foreach ( mcc_spec()['groups'] as $name => $g ) {
+			$g               = (array) $g;
+			$groups[ $name ] = array(
+				'label'  => (string) ( $g['label'] ?? ucfirst( str_replace( '_', ' ', $name ) ) ),
+				'repeat' => ! empty( $g['repeat'] ),
+				'on'     => array_values( array_map( 'strval', (array) ( $g['on'] ?? array() ) ) ),
+				'fields' => mcc_normalize_fields( (array) ( $g['fields'] ?? array() ) ),
+			);
+		}
+		$GLOBALS['mcc_cache']['groups'] = $groups;
+	}
+	return $GLOBALS['mcc_cache']['groups'];
+}
+
+// The post types a group is on ("page:contact" is on pages).
+function mcc_group_types( array $g ): array {
+	return array_values( array_unique( array_diff( array_map( fn( $on ) => explode( ':', $on, 2 )[0], $g['on'] ), array( 'options' ) ) ) );
+}
+
+// Every post type's fields, from the groups on it that don't repeat (each field its own post meta).
+function mcc_fields( ?string $post_type = null ): array {
+	if ( ! isset( $GLOBALS['mcc_cache']['fields'] ) ) {
+		$fields = array();
+		foreach ( mcc_groups() as $g ) {
+			if ( ! $g['repeat'] ) {
+				foreach ( mcc_group_types( $g ) as $type ) {
+					$fields[ $type ] = array_merge( $fields[ $type ] ?? array(), $g['fields'] );
+				}
+			}
+		}
+		$GLOBALS['mcc_cache']['fields'] = $fields;
+	}
+	$fields = $GLOBALS['mcc_cache']['fields'];
+	return null === $post_type ? $fields : ( $fields[ $post_type ] ?? array() );
+}
+
+// The field of a post's type by that name, if it has one.
+function mcc_post_field( int $post_id, string $name ): ?array {
+	return $post_id ? ( mcc_fields( (string) get_post_type( $post_id ) )[ $name ] ?? null ) : null;
+}
+
+// A group's REST schema: an object of its fields, or a list of them.
+function mcc_group_schema( array $g ): array {
+	$props = array();
+	foreach ( $g['fields'] as $name => $f ) {
+		$props[ $name ] = mcc_is_many( $f ) ? array( 'type' => 'array', 'items' => array( 'type' => 'integer' ) ) : array( 'type' => mcc_meta_type( $f ) );
+	}
+	$row = array( 'type' => 'object', 'properties' => $props, 'additionalProperties' => false );
+	return $g['repeat'] ? array( 'type' => 'array', 'items' => $row ) : $row;
+}
+
+function mcc_group_sanitize( $value, array $g ): array {
+	$row = function ( $r ) use ( $g ) {
+		$out = array();
+		foreach ( $g['fields'] as $name => $f ) {
+			$value        = ( (array) $r )[ $name ] ?? '';
+			$out[ $name ] = mcc_sanitize( mcc_is_many( $f ) && ! is_array( $value ) ? array( $value ) : $value, $f );
+		}
+		return $out;
+	};
+	$value = (array) $value;
+	return $g['repeat'] ? array_values( array_map( $row, array_filter( $value, fn( $r ) => is_array( $r ) || is_object( $r ) ) ) ) : $row( $value );
+}
+
+// A group's saved value: the post's, when the group is on its type; else the site's, when it's on the site.
+function mcc_group_value( string $group, int $post_id = 0 ): array {
+	$g = mcc_groups()[ $group ] ?? null;
+	if ( ! $g ) {
+		return array();
+	}
+	if ( $post_id && in_array( get_post_type( $post_id ), mcc_group_types( $g ), true ) ) {
+		if ( post_password_required( $post_id ) ) {
+			return array();
+		}
+		if ( $g['repeat'] ) {
+			$value = get_post_meta( $post_id, $group, true );
+		} else {
+			$value = array();
+			foreach ( $g['fields'] as $name => $f ) {
+				$value[ $name ] = mcc_meta( $post_id, $name, $f );
+			}
+		}
+	} elseif ( in_array( 'options', $g['on'], true ) ) {
+		$value = get_option( "mcc_$group", array() );
+	} else {
+		$value = array();
+	}
+	return is_array( $value ) ? $value : array();
+}
+
+/**
+ * Checks a spec and saves it (the marccent_content option), so the next load registers it. Returns true, or a
+ * WP_Error listing what's wrong (nothing is saved then).
+ */
+function mcc_save_spec( array $spec ) {
+	$spec   = mcc_canonical( $spec );
+	$errors = array();
+	$name   = fn( $s, $max = 64 ) => is_string( $s ) && preg_match( '/^[a-z][a-z0-9_]{0,' . ( $max - 1 ) . '}$/', $s );
+
+	$builtin = get_post_types( array( '_builtin' => true ) );
+	foreach ( $spec['types'] as $type => $t ) {
+		if ( ! $name( $type, 20 ) || isset( $builtin[ $type ] ) ) {
+			/* translators: %s: a post type's name */
+			$errors[] = sprintf( __( 'Post type “%s”: its name must be up to 20 lowercase letters, numbers or underscores, starting with a letter, and not one of WordPress’s own.', 'marccent-content' ), $type );
+		}
+		foreach ( array_keys( (array) ( $t['taxonomies'] ?? array() ) ) as $tax ) {
+			if ( ! $name( $tax, 32 ) ) {
+				/* translators: 1: a taxonomy's name, 2: its post type */
+				$errors[] = sprintf( __( 'Taxonomy “%1$s” (%2$s): its name must be up to 32 lowercase letters, numbers or underscores.', 'marccent-content' ), $tax, $type );
 			}
 		}
 	}
-	unset( $list, $f );
-	return null === $post_type ? $fields : ( $fields[ $post_type ] ?? array() );
+
+	$known = array_merge( array_keys( $spec['types'] ), array_values( array_diff( get_post_types( array( 'public' => true ) ), array( 'attachment' ) ) ) );
+	$keys  = array(); // per post type: meta key => the group that uses it
+	foreach ( $spec['groups'] as $group => $g ) {
+		$g     = (array) $g;
+		$label = (string) ( $g['label'] ?? $group );
+		if ( ! $name( $group ) ) {
+			/* translators: %s: a field group's name */
+			$errors[] = sprintf( __( 'Field group “%s”: its name must be lowercase letters, numbers or underscores, starting with a letter.', 'marccent-content' ), $group );
+		}
+		if ( ! (array) ( $g['on'] ?? array() ) ) {
+			/* translators: %s: a field group's label */
+			$errors[] = sprintf( __( '%s: choose where it goes (a post type, some pages, or the site).', 'marccent-content' ), $label );
+		}
+		foreach ( (array) ( $g['on'] ?? array() ) as $on ) {
+			$type = explode( ':', (string) $on, 2 )[0];
+			if ( 'options' !== $on && ! in_array( $type, $known, true ) ) {
+				/* translators: 1: a field group's label, 2: a post type's name */
+				$errors[] = sprintf( __( '%1$s: there is no post type “%2$s”.', 'marccent-content' ), $label, $type );
+			}
+		}
+		foreach ( (array) ( $g['fields'] ?? array() ) as $field => $f ) {
+			$f = (array) $f;
+			if ( ! $name( $field ) ) {
+				/* translators: 1: a field group's label, 2: a field's name */
+				$errors[] = sprintf( __( '%1$s: the field name “%2$s” must be lowercase letters, numbers or underscores, starting with a letter.', 'marccent-content' ), $label, $field );
+			}
+			if ( ! in_array( $f['type'] ?? 'string', MCC_FIELD_TYPES, true ) ) {
+				/* translators: 1: a field group's label, 2: a field's name */
+				$errors[] = sprintf( __( '%1$s: the field “%2$s” has an unknown type.', 'marccent-content' ), $label, $field );
+			}
+			if ( 'relation' === ( $f['type'] ?? '' ) && ! in_array( (string) ( $f['to'] ?? '' ), $known, true ) ) {
+				/* translators: 1: a field group's label, 2: a field's name */
+				$errors[] = sprintf( __( '%1$s: the relation “%2$s” needs the post type it relates to.', 'marccent-content' ), $label, $field );
+			}
+			// "account.title" follows the relation; "office.phone" is a group's field: one name can't be both.
+			if ( 'relation' === ( $f['type'] ?? '' ) && isset( $spec['groups'][ $field ] ) ) {
+				/* translators: 1: a field group's label, 2: a field's name */
+				$errors[] = sprintf( __( '%1$s: the relation “%2$s” has a field group’s name; give one of them another.', 'marccent-content' ), $label, $field );
+			}
+		}
+		// On posts, a group's fields (or a repeating group itself) are post meta: their names can't clash.
+		$types = mcc_group_types( array( 'on' => array_map( 'strval', (array) ( $g['on'] ?? array() ) ) ) );
+		$own   = empty( $g['repeat'] ) ? array_keys( (array) ( $g['fields'] ?? array() ) ) : array( $group );
+		foreach ( $types as $type ) {
+			foreach ( $own as $key ) {
+				if ( in_array( $key, MCC_RESERVED, true ) ) {
+					/* translators: 1: a field group's label, 2: a field's name */
+					$errors[] = sprintf( __( '%1$s: “%2$s” is a value every post already has; give the field another name.', 'marccent-content' ), $label, $key );
+				} elseif ( isset( $keys[ $type ][ $key ] ) ) {
+					/* translators: 1: a field group's label, 2: a field's name, 3: a post type, 4: another field group's label */
+					$errors[] = sprintf( __( '%1$s: “%2$s” is already used on %3$s by %4$s.', 'marccent-content' ), $label, $key, $type, $keys[ $type ][ $key ] );
+				}
+				$keys[ $type ][ $key ] = $label;
+			}
+		}
+	}
+	if ( $errors ) {
+		return new WP_Error( 'mcc_spec', implode( "\n", array_unique( $errors ) ), array( 'status' => 400, 'errors' => array_values( array_unique( $errors ) ) ) );
+	}
+
+	update_option( 'marccent_content', wp_json_encode( $spec, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) );
+	update_option( 'mcc_flush_rewrites', 1, true ); // autoloaded: read on every load (inc/admin.php)
+	mcc_spec_reset();
+	return true;
 }
 
 function mcc_register_types(): void {
@@ -96,11 +349,31 @@ function mcc_register_types(): void {
 	foreach ( mcc_fields() as $post_type => $fields ) {
 		foreach ( $fields as $name => $f ) {
 			register_post_meta( $post_type, $name, array(
-				'type'              => array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer' )[ $f['type'] ] ?? 'string',
-				'single'            => true,
+				'type'              => mcc_meta_type( $f ),
+				'single'            => ! mcc_is_many( $f ), // several related posts: a meta row each
 				'show_in_rest'      => true,
 				'label'             => $f['label'],
 				'sanitize_callback' => fn( $value ) => mcc_sanitize( $value, $f ),
+				'auth_callback'     => fn( $allowed, $key, $post_id ) => current_user_can( 'edit_post', $post_id ),
+			) );
+		}
+	}
+
+	// Repeating groups on posts: their rows, as one value under the group's name. (A group on the site is an option,
+	// saved through the Site content screen: inc/admin.php.)
+	foreach ( mcc_groups() as $name => $g ) {
+		if ( ! $g['repeat'] ) {
+			continue;
+		}
+		$schema = mcc_group_schema( $g );
+		foreach ( mcc_group_types( $g ) as $post_type ) {
+			register_post_meta( $post_type, $name, array(
+				'type'              => 'array',
+				'single'            => true,
+				'default'           => array(),
+				'show_in_rest'      => array( 'schema' => $schema ),
+				'label'             => $g['label'],
+				'sanitize_callback' => fn( $value ) => mcc_group_sanitize( $value, $g ),
 				'auth_callback'     => fn( $allowed, $key, $post_id ) => current_user_can( 'edit_post', $post_id ),
 			) );
 		}
@@ -122,12 +395,18 @@ add_filter( 'wp_robots', function ( $robots ) {
  * password is given (as WordPress does with its content), unless the user can edit it.
  */
 add_action( 'rest_api_init', function () {
-	foreach ( array_keys( mcc_fields() ) as $post_type ) {
-		add_filter( "rest_prepare_$post_type", function ( $response, $post, $request ) use ( $post_type ) {
+	$keys = array_map( 'array_keys', mcc_fields() );
+	foreach ( mcc_groups() as $name => $g ) {
+		foreach ( $g['repeat'] ? mcc_group_types( $g ) : array() as $post_type ) {
+			$keys[ $post_type ][] = $name;
+		}
+	}
+	foreach ( $keys as $post_type => $names ) {
+		add_filter( "rest_prepare_$post_type", function ( $response, $post, $request ) use ( $names ) {
 			$locked = '' !== $post->post_password && ! current_user_can( 'edit_post', $post->ID )
 				&& ! hash_equals( $post->post_password, (string) $request['password'] );
 			if ( $locked && isset( $response->data['meta'] ) ) {
-				foreach ( array_keys( mcc_fields( $post_type ) ) as $name ) {
+				foreach ( $names as $name ) {
 					unset( $response->data['meta'][ $name ] );
 				}
 			}
@@ -143,6 +422,12 @@ function mcc_sanitize( $value, array $f ) {
 		case 'boolean':
 			return (bool) $value;
 		case 'image':
+			return absint( $value );
+		case 'relation':
+			// Several in a row's value are a list; on a post, each meta row is one id.
+			if ( is_array( $value ) ) {
+				return array_values( array_filter( array_map( 'absint', $value ) ) );
+			}
 			return absint( $value );
 		case 'url':
 			return esc_url_raw( (string) $value );

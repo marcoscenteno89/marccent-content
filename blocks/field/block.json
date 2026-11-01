@@ -15,7 +15,7 @@
 		"link": { "type": "boolean", "default": false },
 		"label": { "type": "string", "default": "" }
 	},
-	"usesContext": [ "postId", "postType" ],
+	"usesContext": [ "postId", "postType", "marccent/source" ],
 	"supports": { "html": false },
 	"editorScript": "marccent-content-editor",
 	"render": "file:./render.php"
