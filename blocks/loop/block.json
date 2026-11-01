@@ -5,7 +5,7 @@
 	"title": "Loop",
 	"category": "marccent",
 	"icon": "update",
-	"description": "Repeats its item for every post of a type (posts, projects, products…) or every row of a repeating field group (a gallery's photos, offices), in the theme's grid. Design the item once with any blocks; show the values with Field blocks, {{ tokens }} or block bindings.",
+	"description": "Repeats its item for every post of a type (posts, projects, products…), the posts related to the current one (a relation field, either way), or every row of a repeating field group (a gallery's photos, offices), in the theme's grid. Design the item once with any blocks; show the values with Field blocks, {{ tokens }} or block bindings. Loops nest: an inner Loop's current post is the outer one's item.",
 	"keywords": [ "query", "posts", "list", "grid", "custom post type", "repeater", "rows" ],
 	"textdomain": "marccent-content",
 	"attributes": {
@@ -17,6 +17,7 @@
 		"taxonomy": { "type": "string", "default": "" },
 		"terms": { "type": "string", "default": "" },
 		"parent": { "type": "string", "default": "" },
+		"relation": { "type": "string", "default": "" },
 		"from": { "type": "string", "default": "" },
 		"where": { "type": "string", "default": "" },
 		"offset": { "type": "number", "default": 0 },
@@ -25,6 +26,7 @@
 		"gap": { "type": "string", "default": "" },
 		"empty": { "type": "string", "default": "Nothing here yet." }
 	},
+	"usesContext": [ "postId", "postType" ],
 	"providesContext": { "marccent/source": "source" },
 	"supports": { "html": false },
 	"editorScript": "marccent-content-editor",

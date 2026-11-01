@@ -1,8 +1,9 @@
 <?php
 /**
  * The admin side, everything kept in the database:
- * - Fields → Field groups and Fields → Post types: the spec (inc/types.php) built by pointing and clicking
- *   (assets/admin.js), for administrators. Fields → JSON: the same spec as JSON, for whoever prefers to type it.
+ * - Fields → Field groups: the groups in WordPress's list table (inc/list-table.php: search, views, sorting, bulk
+ *   delete, screen options); adding or editing one opens its editor (assets/admin.js). Fields → Post types: the same
+ *   by pointing and clicking, for administrators. Fields → JSON: the same spec as JSON, for whoever prefers to type it.
  * - Site content: the groups that are on the site (offices, opening hours…), for anyone who edits pages.
  * - Tools → Marccent export (Marccent Blocks): the spec and the site content, as JSON.
  * The screens save through the marccent-content/v1 REST routes below. Saving the spec flushes the rewrite rules on
@@ -34,7 +35,8 @@ function mcc_save_site_values( array $values ): void {
 }
 
 add_action( 'init', function () {
-	if ( get_option( 'mcc_flush_rewrites' ) ) {
+	// Read from the autoloaded options: when the flag isn't set (nearly always), get_option would ask the database.
+	if ( ! empty( wp_load_alloptions()['mcc_flush_rewrites'] ) ) {
 		delete_option( 'mcc_flush_rewrites' );
 		flush_rewrite_rules( false );
 	}
@@ -107,9 +109,10 @@ add_action( 'admin_menu', function () {
 			printf( '<div class="wrap"><div id="mcc-admin" data-screen="%s"></div></div>', esc_attr( $screen ) );
 		};
 	};
-	add_menu_page( __( 'Field groups', 'marccent-content' ), __( 'Fields', 'marccent-content' ), 'manage_options', 'mcc-groups', $app( 'groups' ), 'dashicons-feedback', 81 );
+	add_menu_page( __( 'Field groups', 'marccent-content' ), __( 'Fields', 'marccent-content' ), 'manage_options', 'mcc-groups', 'mcc_groups_page', 'dashicons-feedback', 81 );
 	$hooks   = array();
-	$hooks[] = add_submenu_page( 'mcc-groups', __( 'Field groups', 'marccent-content' ), __( 'Field groups', 'marccent-content' ), 'manage_options', 'mcc-groups', $app( 'groups' ) );
+	$hooks[] = add_submenu_page( 'mcc-groups', __( 'Field groups', 'marccent-content' ), __( 'Field groups', 'marccent-content' ), 'manage_options', 'mcc-groups', 'mcc_groups_page' );
+	add_action( "load-{$hooks[0]}", 'mcc_groups_load' );
 	$hooks[] = add_submenu_page( 'mcc-groups', __( 'Post types', 'marccent-content' ), __( 'Post types', 'marccent-content' ), 'manage_options', 'mcc-types', $app( 'types' ) );
 	add_submenu_page( 'mcc-groups', __( 'Fields as JSON', 'marccent-content' ), __( 'JSON', 'marccent-content' ), 'manage_options', 'mcc-json', 'mcc_json_page' );
 	if ( mcc_site_groups() ) {

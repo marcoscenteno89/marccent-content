@@ -6,6 +6,9 @@
  * - A panel beside a post for each field group on it (Fields → Field groups); a repeating group is a list of rows to
  *   add, reorder and remove. The field controls are window.marccentContentUI too, for the admin screens (admin.js).
  * - The marccent/field binding source: previews bound blocks and lists the type's values in the Attributes panel.
+ * - Relations (a field of type relation, to a post type): picked from that type's posts beside a post; their keys
+ *   ("account", "account.phone") in the Field block's list; a Loop's "Related" setting lists the posts related to the
+ *   current one either way.
  * window.marccentContent: { types: [ { name, label, singular, taxonomies: [ { name, label } ], fields: { name: field } } ],
  * groups: { name: { label, repeat, on: [ 'page', 'page:gallery', 'options' ], fields } }, currency }; a type's fields are
  * those of the groups on it that don't repeat.
@@ -14,8 +17,9 @@
 	const { createElement: el, Fragment } = wp.element;
 	const { registerBlockType, registerBlockBindingsSource } = wp.blocks;
 	const { InspectorControls, useBlockProps, useInnerBlocksProps, InnerBlocks, BlockContextProvider, MediaUpload, MediaUploadCheck } = wp.blockEditor;
-	const { PanelBody, SelectControl, RangeControl, TextControl, ToggleControl, TextareaControl, Button } = wp.components;
+	const { PanelBody, SelectControl, RangeControl, TextControl, ToggleControl, TextareaControl, Button, ComboboxControl } = wp.components;
 	const { useSelect } = wp.data;
+	const { useState } = wp.element;
 	const { useEntityProp } = wp.coreData;
 	const data = window.marccentContent || { types: [], groups: {}, currency: '$' };
 	data.groups = data.groups || {};
@@ -25,30 +29,75 @@
 	const icon = ( src ) => ( { src, foreground: '#fff', background: '#1f64cf' } );
 	const typeOf = ( name ) => data.types.find( ( t ) => t.name === name ) || { name, label: name, singular: name, taxonomies: [], fields: {} };
 
+	// A relation's keys, one step in: the related post's title, link and fields ("account.phone").
+	const relatedKeys = ( name, f ) => {
+		const to = typeOf( f.to );
+		return [ opt( `${ f.label } → link`, `${ name }.link` ),
+			...Object.entries( to.fields ).map( ( [ n, x ] ) => opt( `${ f.label } → ${ x.label }`, `${ name }.${ n }` ) ) ];
+	};
+	const fieldKeys = ( fields ) => Object.entries( fields ).flatMap( ( [ name, f ] ) => [
+		opt( `${ f.label } (${ f.type === 'relation' ? 'relation' : 'field' })`, name ),
+		...( f.type === 'relation' ? relatedKeys( name, f ) : [] ),
+	] );
+
+	// Counts and sums over what's related to a type's posts (inc/values.php, mcc_aggregate): the posts that point to one,
+	// its own related posts, its repeating groups' rows; and the sum of each one's numbers.
+	const numbers = ( fields ) => Object.entries( fields ).filter( ( [ , f ] ) => f.type === 'number' );
+	const aggregateKeys = ( type ) => {
+		const t = typeOf( type );
+		return [
+			...data.types.flatMap( ( o ) => Object.entries( o.fields ).filter( ( [ , f ] ) => f.type === 'relation' && f.to === type ).flatMap( ( [ by, f ] ) => [
+				opt( `Number of ${ o.label.toLowerCase() } (by ${ f.label })`, `count:${ o.name }.${ by }` ),
+				...numbers( o.fields ).map( ( [ n, x ] ) => opt( `Sum of ${ x.label } (${ o.label.toLowerCase() } by ${ f.label })`, `sum:${ o.name }.${ by }.${ n }` ) ),
+			] ) ),
+			...Object.entries( t.fields ).filter( ( [ , f ] ) => f.type === 'relation' && f.multiple ).flatMap( ( [ name, f ] ) => [
+				opt( `Number of ${ f.label }`, `count:this.${ name }` ),
+				...numbers( typeOf( f.to ).fields ).map( ( [ n, x ] ) => opt( `Sum of ${ x.label } (${ f.label })`, `sum:this.${ name }.${ n }` ) ),
+			] ),
+			...Object.entries( data.groups ).filter( ( [ , g ] ) => g.repeat && g.on.some( ( on ) => on.split( ':' )[ 0 ] === type ) ).flatMap( ( [ name, g ] ) => [
+				opt( `Number of ${ g.label }`, `count:this.${ name }` ),
+				...numbers( g.fields ).map( ( [ n, x ] ) => opt( `Sum of ${ x.label } (${ g.label })`, `sum:this.${ name }.${ n }` ) ),
+			] ),
+		];
+	};
+
 	// The values a type offers: the post's own, its terms and its fields; in a Loop of a group's rows, the row's fields.
 	const keysOf = ( type, source ) => {
 		if ( source && data.groups[ source ] ) {
-			return Object.entries( data.groups[ source ].fields ).map( ( [ name, f ] ) => opt( f.label, name ) );
+			return fieldKeys( data.groups[ source ].fields );
 		}
 		const t = typeOf( type );
 		return [
 			opt( 'Title', 'title' ), opt( 'Excerpt', 'excerpt' ), opt( 'Date', 'date' ), opt( 'Link', 'link' ),
 			opt( 'Featured image', 'image' ), opt( 'Author', 'author' ),
 			...t.taxonomies.map( ( x ) => opt( x.label, `terms:${ x.name }` ) ),
-			...Object.entries( t.fields ).map( ( [ name, f ] ) => opt( `${ f.label } (field)`, name ) ),
+			...fieldKeys( t.fields ),
+			...aggregateKeys( type ),
 		];
 	};
 	const FORMATS = [ opt( 'As is', '' ), opt( 'Currency', 'currency' ), opt( 'Number', 'number' ), opt( 'Date', 'date' ), opt( 'Upper case', 'upper' ), opt( 'First 20 words', 'words:20' ), opt( 'Without prefix / suffix', 'raw' ) ];
 
 	const text = ( v ) => String( v && typeof v === 'object' ? v.raw ?? v.rendered ?? '' : v ?? '' ).replace( /<[^>]*>/g, '' ).trim();
 
+	// A relation's value as a list of ids.
+	const idsOf = ( v ) => ( Array.isArray( v ) ? v : [ v ] ).map( Number ).filter( Boolean );
+
 	// A post's value for a key, as the editor can show it (a close preview of inc/values.php); null when unknown.
-	const usePreview = ( postType, postId, key ) => useSelect( ( select ) => {
-		if ( ! postId || ! key ) return null;
-		const core = select( 'core' );
+	const usePreview = ( postType, postId, key ) => useSelect( ( select ) => ( postId && key ? previewOf( select( 'core' ), postType, postId, key.split( '|' )[ 0 ].trim() ) : null ), [ postType, postId, key ] );
+
+	const previewOf = ( core, postType, postId, key ) => {
 		const post = core.getEditedEntityRecord( 'postType', postType, postId );
 		if ( ! post ) return null;
-		const [ name, arg ] = key.split( '|' )[ 0 ].trim().split( ':' );
+		const [ name, arg ] = key.split( ':' );
+		// "account.phone": the related posts' value.
+		const dot = name.indexOf( '.' );
+		if ( dot > 0 ) {
+			const rel = typeOf( postType ).fields[ name.slice( 0, dot ) ];
+			if ( rel?.type !== 'relation' ) return null;
+			const rest = name.slice( dot + 1 ) + ( arg ? `:${ arg }` : '' );
+			const values = idsOf( post.meta?.[ name.slice( 0, dot ) ] ).map( ( id ) => previewOf( core, rel.to, id, rest ) ).filter( Boolean );
+			return values.length ? values.join( ', ' ) : null;
+		}
 		const field = typeOf( postType ).fields[ name ];
 		const media = ( id ) => ( id ? core.getMedia( id )?.source_url ?? null : null );
 		if ( name === 'title' ) return text( post.title );
@@ -63,12 +112,16 @@
 		}
 		if ( field ) {
 			const v = post.meta?.[ name ];
+			if ( field.type === 'relation' ) {
+				const titles = idsOf( v ).map( ( id ) => text( core.getEntityRecord( 'postType', field.to, id )?.title ) ).filter( Boolean );
+				return titles.length ? titles.join( ', ' ) : null;
+			}
 			if ( field.type === 'image' ) return media( v );
 			if ( field.type === 'boolean' ) return v ? 'Yes' : 'No';
 			return v === '' || v == null ? null : `${ field.prefix ?? '' }${ v }${ field.suffix ?? '' }`;
 		}
 		return null;
-	}, [ postType, postId, key ] );
+	};
 
 	/* Loop */
 
@@ -81,15 +134,27 @@
 
 	registerBlockType( 'marccent/loop', {
 		icon: icon( 'update' ),
-		edit( { attributes: a, setAttributes: set } ) {
+		edit( { attributes: a, setAttributes: set, context } ) {
 			const type = typeOf( a.postType );
+			const forward = a.relation.startsWith( 'this.' );
+			// Related either way: the posts of this type whose relation is the current post, or the current post's own.
+			const relations = [
+				opt( 'Any post (no relation)', '' ),
+				...Object.entries( type.fields ).filter( ( [ , f ] ) => f.type === 'relation' )
+					.map( ( [ name, f ] ) => opt( `Those whose ${ f.label } is the current ${ typeOf( f.to ).singular }`, name ) ),
+				// The current post's type first (the outer Loop's), then the others (a template for one of them).
+				...[ ...data.types ].sort( ( x, y ) => ( y.name === context.postType ) - ( x.name === context.postType ) ).flatMap( ( t ) => Object.entries( t.fields )
+					.filter( ( [ , f ] ) => f.type === 'relation' )
+					.map( ( [ name, f ] ) => opt( `The current ${ t.singular }’s ${ f.label } (${ typeOf( f.to ).label })`, `this.${ name }` ) ) ),
+			];
 			const group = a.source ? data.groups[ a.source ] : null;
 			const repeating = Object.entries( data.groups ).filter( ( [ , g ] ) => g.repeat );
 			const first = useSelect( ( select ) => ( group ? null : select( 'core' ).getEntityRecords( 'postType', a.postType, { per_page: 1, status: 'publish', orderby: 'date' } ) ), [ a.postType, !! group ] );
 			const postId = first?.[ 0 ]?.id;
 			const blockProps = useBlockProps( { className: 'mcc-loop' } );
 			const inner = useInnerBlocksProps( { className: [ 'grid', `cols-${ a.cols }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
-			const orders = [ opt( 'Date', 'date' ), opt( 'Title', 'title' ), opt( 'Last modified', 'modified' ), opt( 'Menu order', 'menu_order' ), opt( 'Random', 'rand' ),
+			const orders = [ ...( forward ? [ opt( 'Their order in the relation', 'post__in' ) ] : [] ),
+				opt( 'Date', 'date' ), opt( 'Title', 'title' ), opt( 'Last modified', 'modified' ), opt( 'Menu order', 'menu_order' ), opt( 'Random', 'rand' ),
 				...Object.entries( type.fields ).map( ( [ name, f ] ) => opt( `${ f.label } (field)`, `field:${ name }` ) ) ];
 			const tokens = keysOf( a.postType, a.source ).map( ( k ) => `{{ ${ k.value } }}` ).join( '  ' );
 			const sourcePicker = repeating.length > 0 && el( SelectControl, {
@@ -100,7 +165,7 @@
 			const rowsPanel = group && el( PanelBody, { title: 'Rows' },
 				sourcePicker,
 				el( TextControl, { label: 'From', help: 'A page’s path (gallery, or about/team), or options for the site’s. Empty: the page being viewed.', value: a.from, onChange: ( from ) => set( { from } ) } ),
-				el( TextControl, { label: 'Only rows where', help: 'service=flatwork (equal), featured~home (in a comma-separated list); several joined by &.', value: a.where, onChange: ( where ) => set( { where } ) } ),
+				el( TextControl, { label: 'Only rows where', help: 'service=flatwork,curb (one of), service!=curb, featured~home (in a comma-separated list), quantity>2; several joined by &.', value: a.where, onChange: ( where ) => set( { where } ) } ),
 				el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 48, onChange: ( perPage ) => set( { perPage } ) } ),
 				el( RangeControl, { label: 'Skip', value: a.offset, min: 0, max: 20, onChange: ( offset ) => set( { offset } ) } ),
 				el( TextControl, { label: 'When there are none', value: a.empty, onChange: ( empty ) => set( { empty } ) } )
@@ -109,8 +174,19 @@
 				el( InspectorControls, null,
 					rowsPanel || el( PanelBody, { title: 'Query' },
 						sourcePicker,
-						el( SelectControl, { label: 'Post type', value: a.postType, options: data.types.map( ( t ) => opt( t.label, t.name ) ), onChange: ( postType ) => set( { postType, taxonomy: '', terms: '' } ) } ),
+						! forward && el( SelectControl, { label: 'Post type', value: a.postType, options: data.types.map( ( t ) => opt( t.label, t.name ) ), onChange: ( postType ) => set( { postType, taxonomy: '', terms: '', relation: '' } ) } ),
+						el( SelectControl, {
+							label: 'Related', value: a.relation, options: relations,
+							help: 'The current post: the outer Loop’s item, else the page’s. Loops nest as deep as you like, each related to the one around it.',
+							onChange: ( relation ) => {
+								// The current post's relation: its posts' type.
+								const name = relation.startsWith( 'this.' ) ? relation.slice( 5 ) : '';
+								const f = name && data.types.map( ( x ) => x.fields[ name ] ).find( ( x ) => x?.type === 'relation' );
+								set( { relation, ...( f ? { postType: f.to, orderBy: 'post__in', taxonomy: '', terms: '' } : {} ) } );
+							},
+						} ),
 						el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 24, onChange: ( perPage ) => set( { perPage } ) } ),
+						el( TextControl, { label: 'Only posts where', help: 'Their fields: status=New,Scheduled (one of), status!=Cancelled, total>=1000, scheduled<today, products~12; several joined by &.', value: a.where, onChange: ( where ) => set( { where } ) } ),
 						el( SelectControl, { label: 'Order by', value: a.orderBy, options: orders, onChange: ( orderBy ) => set( { orderBy } ) } ),
 						el( SelectControl, { label: 'Order', value: a.order, options: [ opt( 'Descending', 'desc' ), opt( 'Ascending', 'asc' ) ], onChange: ( order ) => set( { order } ) } ),
 						type.taxonomies.length > 0 && el( SelectControl, { label: 'Only from', value: a.taxonomy, options: [ opt( 'Any', '' ), ...type.taxonomies.map( ( x ) => opt( x.label, x.name ) ) ], onChange: ( taxonomy ) => set( { taxonomy } ) } ),
@@ -133,7 +209,7 @@
 					el( 'p', { className: 'mcc-loop-note', style: { margin: '0 0 .5rem', fontSize: '12px', opacity: 0.7 } },
 						group
 							? `Loop: ${ group.label } rows${ a.from ? ` from ${ a.from }` : '' }${ a.where ? ` where ${ a.where }` : '' }. This item repeats for each one.`
-							: `Loop: ${ type.label }. This item repeats for each one${ postId ? `, previewing “${ text( first[ 0 ].title ) }”` : first ? ' (none published yet)' : ' (loading a preview…)' }.` ),
+							: `Loop: ${ type.label }${ a.relation ? ` (${ relations.find( ( r ) => r.value === a.relation )?.label ?? a.relation })` : '' }. This item repeats for each one${ postId ? `, previewing “${ text( first[ 0 ].title ) }”` : first ? ' (none published yet)' : ' (loading a preview…)' }.` ),
 					el( BlockContextProvider, { value: group ? { 'marccent/source': a.source } : { postId, postType: a.postType, 'marccent/source': '' } }, el( 'div', inner ) )
 				)
 			);
@@ -163,7 +239,7 @@
 				el( InspectorControls, null,
 					el( PanelBody, { title: 'Field' },
 						el( SelectControl, { label: 'Value', value: keys.some( ( k ) => k.value === a.key ) ? a.key : '', options: [ ...keys, opt( 'Other (type a key)', '' ) ], onChange: ( key ) => key && set( { key } ) } ),
-						el( TextControl, { label: 'Key', help: 'title, excerpt, date, link, image:medium, terms:<taxonomy>, a field’s name, or a group’s field (office.phone).', value: a.key, onChange: ( key ) => set( { key } ) } ),
+						el( TextControl, { label: 'Key', help: 'title, excerpt, date, link, image:medium, terms:<taxonomy>, a field’s name, a group’s field (office.phone), through a relation (account.phone), or a count or sum (count:work_order.account?status=New).', value: a.key, onChange: ( key ) => set( { key } ) } ),
 						! isImage && el( SelectControl, { label: 'Format', value: a.format, options: FORMATS, onChange: ( format ) => set( { format } ) } ),
 						! isImage && el( SelectControl, { label: 'Tag', value: a.tag, options: [ 'p', 'span', 'div', 'h2', 'h3', 'h4', 'h5', 'h6' ].map( ( t ) => opt( t, t ) ), onChange: ( tag ) => set( { tag } ) } ),
 						el( TextControl, { label: 'Label before it', help: 'e.g. “Price:”', value: a.label, onChange: ( label ) => set( { label } ) } ),
@@ -189,6 +265,7 @@
 			case 'email': return el( TextControl, { ...common, type: 'email', value: value ?? '', onChange } );
 			case 'select': return el( SelectControl, { ...common, value: value ?? '', options: [ opt( '—', '' ), ...( f.options || [] ).map( ( o ) => opt( o, o ) ) ], onChange } );
 			case 'image': return el( ImageControl, { ...common, value, onChange } );
+			case 'relation': return el( RelationControl, { ...common, f, value, onChange } );
 			default: return el( TextControl, { ...common, value: value ?? '', onChange } );
 		}
 	};
@@ -204,6 +281,37 @@
 			} ) ),
 			value ? el( Button, { variant: 'link', isDestructive: true, onClick: () => onChange( 0 ), style: { marginLeft: '8px' } }, 'Remove' ) : null,
 			help && el( 'p', { className: 'components-base-control__help' }, help )
+		);
+	};
+
+	// A relation: one post of its type, or several in an order, picked by searching their titles.
+	const RelationControl = ( { label, help, f, value, onChange } ) => {
+		const [ search, setSearch ] = useState( '' );
+		const many = !! f.multiple;
+		const ids = idsOf( value );
+		const { found, chosen } = useSelect( ( select ) => {
+			const core = select( 'core' );
+			return {
+				found: core.getEntityRecords( 'postType', f.to, { per_page: 20, search, status: 'publish', orderby: search ? 'relevance' : 'title', order: 'asc' } ) || [],
+				// Each one by its id: kept from any query that loaded it, so a new search doesn't blank its title.
+				chosen: ids.map( ( id ) => core.getEntityRecord( 'postType', f.to, id ) ).filter( Boolean ),
+			};
+		}, [ f.to, search, ids.join( ',' ) ] );
+		const titleOf = ( id ) => text( [ ...chosen, ...found ].find( ( p ) => p.id === id )?.title ) || `#${ id }`;
+		const options = [ ...chosen, ...found ].filter( ( p, i, all ) => all.findIndex( ( x ) => x.id === p.id ) === i )
+			.filter( ( p ) => ! many || ! ids.includes( p.id ) ).map( ( p ) => opt( text( p.title ) || `#${ p.id }`, String( p.id ) ) );
+		const put = ( next ) => onChange( many ? next : next[ 0 ] || 0 );
+		return el( 'div', { style: { marginBottom: '16px' } },
+			el( ComboboxControl, {
+				label, help: help || `${ typeOf( f.to ).label }: type to search.`, options, onFilterValueChange: setSearch,
+				value: many ? null : ( ids[ 0 ] ? String( ids[ 0 ] ) : null ),
+				onChange: ( v ) => put( many ? ( v ? [ ...ids, Number( v ) ] : ids ) : ( v ? [ Number( v ) ] : [] ) ),
+			} ),
+			many && ids.map( ( id, i ) => el( 'div', { key: id, style: { display: 'flex', gap: '4px', alignItems: 'center' } },
+				el( 'span', { style: { flex: 1 } }, titleOf( id ) ),
+				el( Button, { size: 'small', icon: 'arrow-up-alt2', label: 'Up', disabled: i === 0, onClick: () => put( ids.map( ( x, j ) => ( j === i - 1 ? id : j === i ? ids[ i - 1 ] : x ) ) ) } ),
+				el( Button, { size: 'small', icon: 'no-alt', label: 'Remove', isDestructive: true, onClick: () => put( ids.filter( ( x ) => x !== id ) ) } )
+			) )
 		);
 	};
 
@@ -284,6 +392,7 @@
 						else if ( key === 'link' ) v = post.link;
 						else if ( key === 'date' ) v = post.date && new Date( post.date ).toLocaleDateString();
 						else if ( key.startsWith( 'image' ) ) v = post.featured_media ? core.getMedia( post.featured_media )?.source_url : null;
+						else if ( key.includes( '.' ) || field?.type === 'relation' ) v = previewOf( core, context.postType, context.postId, key );
 						else if ( field ) v = field.type === 'image' ? core.getMedia( post.meta?.[ key ] )?.source_url : post.meta?.[ key ];
 					}
 					out[ attribute ] = v == null || v === '' ? `{{ ${ args?.key } }}` : String( v );

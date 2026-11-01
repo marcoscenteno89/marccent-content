@@ -8,6 +8,12 @@
  *   <field>, <field>:<size> for an image field: one of the spec's fields (inc/types.php), with its prefix and suffix
  *   <image field>:alt: the image's alt text
  *   <group>.<field>: a field of a group that doesn't repeat (the post's, else the site's): "office.phone"
+ *   <relation>: the related post's title (several: comma-separated)
+ *   <relation>.<key>: any of these keys of the related post, followed as far as it goes ("work_order.account.title");
+ *   of several related posts, each one's, comma-separated ("products.title")
+ *
+ *   count:<what>, sum:<what>.<key>, avg:…, min:…, max:… over related posts or rows, with an optional where after a "?"
+ *   (mcc_aggregate): "count:work_order.account?status=New", "sum:this.line_items.quantity"
  *
  * Inside a Loop of a group's rows, the row's fields come first: "caption", "image:medium".
  *
@@ -30,7 +36,8 @@ function mcc_row(): ?array {
 	return $GLOBALS['mcc_rows'] ? end( $GLOBALS['mcc_rows'] ) : null;
 }
 
-// The field a key names, where the value comes from: the current row's, a group's ("office.phone") or the post's.
+// The field a key names, where the value comes from: the current row's, a group's ("office.phone") or the post's; at
+// the end of the relations it follows ("account.logo": the account's logo field).
 function mcc_field_def( int $post_id, string $key ): ?array {
 	$name = explode( ':', mcc_parse_key( $key )[0], 2 )[0];
 	$row  = mcc_row();
@@ -38,19 +45,119 @@ function mcc_field_def( int $post_id, string $key ): ?array {
 		return $row['fields'][ $name ];
 	}
 	if ( str_contains( $name, '.' ) ) {
-		[ $group, $sub ] = explode( '.', $name, 2 );
-		return mcc_groups()[ $group ]['fields'][ $sub ] ?? null;
+		[ $first, $rest ] = explode( '.', $name, 2 );
+		$f                = $row['fields'][ $first ] ?? mcc_post_field( $post_id, $first );
+		if ( $f && 'relation' === $f['type'] ) {
+			return mcc_type_field_def( $f['to'], $rest );
+		}
+		return mcc_groups()[ $first ]['fields'][ $rest ] ?? null; // a group's field ("office.phone")
 	}
-	return $post_id ? ( mcc_fields( (string) get_post_type( $post_id ) )[ $name ] ?? null ) : null;
+	return mcc_post_field( $post_id, $name );
+}
+
+// A post type's field a key names, through its relations ("account.owner.email").
+function mcc_type_field_def( string $type, string $name ): ?array {
+	if ( str_contains( $name, '.' ) ) {
+		[ $first, $rest ] = explode( '.', $name, 2 );
+		$f                = mcc_fields( $type )[ $first ] ?? null;
+		return $f && 'relation' === $f['type'] ? mcc_type_field_def( $f['to'], $rest ) : null;
+	}
+	return mcc_fields( $type )[ $name ] ?? null;
+}
+
+/**
+ * A key's first step when it follows a relation ("account.title"): the related posts (the row's relation's, else the
+ * post's) and the rest of the key, to read on each. Null when the key's first part isn't a relation.
+ */
+function mcc_relation_step( int $post_id, string $name ): ?array {
+	if ( ! str_contains( $name, '.' ) ) {
+		return null;
+	}
+	[ $first, $rest ] = explode( '.', $name, 2 );
+	$row              = mcc_row();
+	if ( $row && isset( $row['fields'][ $first ] ) ) {
+		$f   = $row['fields'][ $first ];
+		$raw = $row['values'][ $first ] ?? '';
+	} elseif ( $f = mcc_post_field( $post_id, $first ) ) {
+		$raw = post_password_required( $post_id ) ? '' : mcc_meta( $post_id, $first, $f );
+	} else {
+		return null;
+	}
+	return 'relation' === $f['type'] ? array( 'ids' => mcc_related_ids( $raw, $f ), 'rest' => $rest ) : null;
+}
+
+/**
+ * Before a Loop renders its items: the posts their relations point to, in one query rather than one per item; their
+ * fields too when the item reads one through the relation ("account.city"). Only the relations the item's markup
+ * names. Each item is a post id, or a row (its values).
+ */
+function mcc_prime_related( array $fields, array $items, string $markup ): void {
+	$ids  = array();
+	$meta = false;
+	foreach ( $fields as $name => $f ) {
+		if ( 'relation' !== $f['type'] || ! str_contains( $markup, $name ) ) {
+			continue;
+		}
+		$meta = $meta || preg_match( '/\b' . preg_quote( $name, '/' ) . '\.(?!(?:title|link|id)\b)/', $markup );
+		foreach ( $items as $item ) {
+			$raw = is_array( $item ) ? ( $item[ $name ] ?? '' ) : mcc_meta( $item, $name, $f );
+			$ids = array_merge( $ids, array_map( 'absint', (array) $raw ) );
+		}
+	}
+	$ids = array_values( array_filter( array_unique( $ids ) ) );
+	if ( $ids ) {
+		_prime_post_caches( $ids, false, $meta );
+	}
+}
+
+// Reads a key on each of a step's posts, as themselves (not the Loop's row): their values, in order.
+function mcc_on_related( array $step, callable $read ): array {
+	$GLOBALS['mcc_rows'][] = null;
+	$out                   = array_map( $read, $step['ids'] );
+	array_pop( $GLOBALS['mcc_rows'] );
+	return $out;
+}
+
+/**
+ * The posts a key ends on when its last field is a relation ("account", "work_order.account"), for a Field block to
+ * link each one; null when it isn't one.
+ */
+function mcc_key_posts( int $post_id, string $key ): ?array {
+	$name = explode( ':', mcc_parse_key( $key )[0], 2 )[0];
+	$step = mcc_relation_step( $post_id, $name );
+	if ( $step ) {
+		$lists = array_filter( mcc_on_related( $step, fn( $id ) => mcc_key_posts( $id, $step['rest'] ) ), 'is_array' );
+		return $lists ? array_values( array_unique( array_merge( ...$lists ) ) ) : ( $step['ids'] ? null : array() );
+	}
+	$row = mcc_row();
+	if ( $row && isset( $row['fields'][ $name ] ) ) {
+		$f = $row['fields'][ $name ];
+		return 'relation' === $f['type'] ? mcc_related_ids( $row['values'][ $name ] ?? '', $f ) : null;
+	}
+	$f = mcc_post_field( $post_id, $name );
+	if ( ! $f || 'relation' !== $f['type'] ) {
+		return null;
+	}
+	return post_password_required( $post_id ) ? array() : mcc_related_ids( mcc_meta( $post_id, $name, $f ), $f );
 }
 
 function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	[ $name, $arg ] = array_pad( explode( ':', $key, 2 ), 2, '' );
 
+	// A relation followed: the rest of the key on the related post (each one's, when there are several).
+	$step = mcc_relation_step( $post_id, $name );
+	if ( $step ) {
+		$rest = $step['rest'] . ( '' !== $arg ? ":$arg" : '' );
+		return implode( ', ', array_filter( mcc_on_related( $step, fn( $id ) => mcc_value( $id, $rest, $format ) ), 'strlen' ) );
+	}
+
 	$row = mcc_row();
 	if ( $row && isset( $row['fields'][ $name ] ) ) {
 		$field = $row['fields'][ $name ];
 		return mcc_format( mcc_affix( mcc_display_value( $row['values'][ $name ] ?? '', $field, $arg ), $field, $format ), $format );
+	}
+	if ( in_array( $name, MCC_AGGREGATES, true ) && '' !== $arg ) {
+		return mcc_format( mcc_aggregate( $post_id, $name, $arg ), $format );
 	}
 	if ( str_contains( $name, '.' ) ) {
 		[ $group, $sub ] = explode( '.', $name, 2 );
@@ -122,6 +229,90 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	return mcc_format( $value, $format );
 }
 
+const MCC_AGGREGATES = array( 'count', 'sum', 'avg', 'min', 'max' );
+
+/**
+ * A count, sum, average, least or greatest over what's related to a post, as Django's aggregates:
+ *   count:work_order.account            the work orders whose account is the post (a post type and its relation)
+ *   sum:work_order.account.total        their totals: after the relation, any key on each (through relations too)
+ *   count:this.products                 the post's own related posts; sum:this.products.price
+ *   count:this.line_items               a repeating group's rows on the post; sum:this.line_items.quantity
+ * each with a where after a "?" (mcc_where): "count:work_order.account?status=New,Scheduled". A count is 0 and a sum
+ * 0 when there's nothing; an average, least or greatest empty. Empty too when the key names no relation or group.
+ */
+function mcc_aggregate( int $post_id, string $fn, string $arg ): string {
+	[ $path, $where ] = array_pad( explode( '?', $arg, 2 ), 2, '' );
+	if ( ! $post_id || post_password_required( $post_id ) ) {
+		return '';
+	}
+	$tests = mcc_where( $where );
+	$type  = (string) get_post_type( $post_id );
+	if ( str_starts_with( $path, 'this.' ) ) {
+		[ $first, $rest ] = array_pad( explode( '.', substr( $path, 5 ), 2 ), 2, '' );
+		$g                = mcc_groups()[ $first ] ?? null;
+		if ( $g && $g['repeat'] && in_array( $type, mcc_group_types( $g ), true ) ) {
+			$rows   = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+			$values = array();
+			foreach ( '' === $rest ? array() : $rows as $r ) {
+				$GLOBALS['mcc_rows'][] = array( 'fields' => $g['fields'], 'values' => $r );
+				$values[]              = mcc_value( $post_id, $rest, 'raw' );
+				array_pop( $GLOBALS['mcc_rows'] );
+			}
+			return mcc_reduce( $fn, count( $rows ), $values );
+		}
+		$f = mcc_fields( $type )[ $first ] ?? null;
+		if ( ! $f || 'relation' !== $f['type'] ) {
+			return '';
+		}
+		$to  = $f['to'];
+		$ids = mcc_related_ids( mcc_meta( $post_id, $first, $f ), $f );
+		if ( $ids && $tests ) {
+			$ids = get_posts( array( 'post_type' => $f['to'], 'post__in' => $ids, 'orderby' => 'post__in', 'posts_per_page' => -1, 'fields' => 'ids', 'meta_query' => mcc_where_meta( $f['to'], $tests ) ) );
+		}
+	} else {
+		[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
+		$f                  = mcc_fields( $of )[ $by ] ?? null;
+		if ( ! $f || 'relation' !== $f['type'] ) {
+			return '';
+		}
+		$to  = $of;
+		$ids = get_posts( array(
+			'post_type'      => $of,
+			'post_status'    => 'publish',
+			'has_password'   => false,
+			'posts_per_page' => -1,
+			'fields'         => 'ids',
+			'meta_query'     => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests ) ),
+		) );
+	}
+	if ( '' !== $rest && $ids ) {
+		// The posts read below, in one query rather than one each (their fields too, when the key names one).
+		_prime_post_caches( $ids, false, isset( mcc_fields( $to )[ explode( '.', $rest, 2 )[0] ] ) );
+	}
+	$values = '' === $rest ? array() : mcc_on_related( array( 'ids' => $ids ), fn( $id ) => mcc_value( $id, $rest, 'raw' ) );
+	return mcc_reduce( $fn, count( $ids ), $values );
+}
+
+// The count, or the numbers' sum, average, least or greatest (a value of several related posts, "85.5, 1200": each).
+function mcc_reduce( string $fn, int $count, array $values ): string {
+	if ( 'count' === $fn ) {
+		return (string) $count;
+	}
+	$numbers = array();
+	foreach ( $values as $value ) {
+		foreach ( explode( ',', (string) $value ) as $n ) {
+			if ( is_numeric( trim( $n ) ) ) {
+				$numbers[] = 0 + trim( $n );
+			}
+		}
+	}
+	if ( ! $numbers ) {
+		return 'sum' === $fn ? '0' : '';
+	}
+	$out = array( 'sum' => fn() => array_sum( $numbers ), 'avg' => fn() => array_sum( $numbers ) / count( $numbers ), 'min' => fn() => min( $numbers ), 'max' => fn() => max( $numbers ) )[ $fn ]();
+	return (string) round( $out, 6 );
+}
+
 // A field's prefix and suffix around its value (not around a URL or an image, nor with the raw format).
 function mcc_affix( string $value, array $field, string $format ): string {
 	if ( '' === $value || 'raw' === $format || in_array( $field['type'], array( 'url', 'image' ), true ) ) {
@@ -131,11 +322,16 @@ function mcc_affix( string $value, array $field, string $format ): string {
 }
 
 function mcc_field_value( int $post_id, string $name, array $field, string $size = '' ): string {
-	return mcc_display_value( get_post_meta( $post_id, $name, true ), $field, $size );
+	return mcc_display_value( mcc_meta( $post_id, $name, $field ), $field, $size );
 }
 
-// A field's saved value as text: an image's URL (or its alt text, "alt"), Yes / No, a date in the site's format.
+// A field's saved value as text: an image's URL (or its alt text, "alt"), Yes / No, a date in the site's format, the
+// related posts' titles.
 function mcc_display_value( $raw, array $field, string $size = '' ): string {
+	if ( 'relation' === $field['type'] ) {
+		$text = fn( $id ) => trim( html_entity_decode( wp_strip_all_tags( get_the_title( $id ) ), ENT_QUOTES, 'UTF-8' ) );
+		return implode( ', ', array_map( $text, mcc_related_ids( $raw, $field ) ) );
+	}
 	if ( is_array( $raw ) || is_object( $raw ) ) {
 		return '';
 	}

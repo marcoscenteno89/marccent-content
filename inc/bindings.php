@@ -43,14 +43,16 @@ function mcc_context_post( $instance ): int {
 
 /*
  * {{ tokens }} in a block's markup, in two passes:
- * - URL attributes (href, src… wp_kses_uri_attributes()), found by WordPress's HTML parser: a token there is a URL,
- *   so its value goes through esc_url_raw (javascript: and other unsafe schemes are dropped) and the parser escapes
- *   the attribute. A link the editor saved URL-encoded (%7B%7B link %7D%7D) is read there too.
+ * - URL attributes (href, src… wp_kses_uri_attributes()), found by WordPress's HTML parser: a token that starts the
+ *   URL is a URL, one inside it a part of it (URL-encoded); the URL then goes through esc_url_raw (javascript: and
+ *   other unsafe schemes are dropped) and the parser escapes the attribute. A link the editor saved URL-encoded (%7B%7B link %7D%7D) is read there too.
  * - Every token left (in text, in other attributes) is the value escaped as text, which is safe in both.
  * A token is strictly a key and an optional format; anything else between braces is left as it was.
  */
 function mcc_token( string $inner ): ?array {
-	return preg_match( '/^\s*([a-z0-9_:.\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
+	// A where after a "?" (count:work_order.account?status=New&total>100), its & and < saved as entities in the markup.
+	$inner = html_entity_decode( $inner, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+	return preg_match( '/^\s*([a-z0-9_:.\-]+(?:\?[^|{}]*)?(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
 }
 
 add_filter( 'render_block', function ( $html, $block, $instance = null ) {
@@ -70,10 +72,17 @@ add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 				continue;
 			}
 			$value = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => '{{' . rawurldecode( $m[1] ) . '}}', $value );
+			// A token that starts the URL is a URL ({{ link }}, {{ website }}#contact); one inside it is a part of it,
+			// URL-encoded (…?mlat={{ lat }}). The whole URL is then escaped once, unless a token in it is left.
 			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known ) {
-				$token = mcc_token( $m[1] );
-				return $known( $token ) ? esc_url_raw( mcc_value( $post_id, ...$token ) ) : $m[0];
-			}, $value );
+				$token = mcc_token( $m[1][0] );
+				if ( ! $known( $token ) ) {
+					return $m[0][0];
+				}
+				$v = mcc_value( $post_id, ...$token );
+				return 0 === $m[0][1] ? $v : rawurlencode( $v );
+			}, trim( $value ), -1, $count, PREG_OFFSET_CAPTURE );
+			$value = str_contains( $value, '{{' ) ? $value : esc_url_raw( $value );
 			$tags->set_attribute( $name, $value );
 		}
 	}

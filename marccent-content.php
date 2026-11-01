@@ -21,6 +21,9 @@ require MCC_DIR . '/inc/values.php';   // a post's value by key: title, link, im
 require MCC_DIR . '/inc/bindings.php'; // the values in blocks: the marccent/field binding source and {{ tokens }}
 require MCC_DIR . '/inc/blocks.php';   // the Loop and Field blocks, and the editor's fields panel
 require MCC_DIR . '/inc/admin.php';    // Fields → Field groups, Post types, JSON; Site content; the export
+if ( is_admin() ) {
+	require MCC_DIR . '/inc/list-table.php'; // Fields → Field groups: the list, in WordPress's list table
+}
 
 register_activation_hook( __FILE__, function () {
 	mcc_register_types();

@@ -2,7 +2,8 @@
 /**
  * Field: one value of the post or the Loop's row (inc/values.php) in the chosen tag, optionally linked to the post and
  * after a label ("Price: "). An image (the featured image, an image field) is an <img> with its alt text (else the
- * post's title); a URL field is a link. Nothing at all when the value is empty, so a card has no blank line.
+ * post's title); a URL field is a link; a relation, the related posts' titles linked to their pages. Nothing at all
+ * when the value is empty, so a card has no blank line.
  *
  * @var array    $attributes
  * @var WP_Block $block
@@ -24,6 +25,11 @@ if ( 'image' === ( $field['type'] ?? ( 'image' === $name ? 'image' : '' ) ) ) {
 	$alt  = mcc_value( $post_id, $field ? "$name:alt" : 'image_alt' );
 	$html = sprintf( '<img src="%s" alt="%s" loading="lazy" decoding="async" class="w-100 round" style="display: block; height: auto; aspect-ratio: 4 / 3; object-fit: cover">', esc_url( $value ), esc_attr( $alt ?: mcc_value( $post_id, 'title' ) ) );
 	$tag  = 'figure';
+} elseif ( 'relation' === ( $field['type'] ?? '' ) && ( $related = mcc_key_posts( $post_id, $key ) ) ) {
+	// The related posts, each linked to its page (several: comma-separated).
+	$html = implode( ', ', array_map( fn( $id ) => sprintf( '<a href="%s">%s</a>', esc_url( get_permalink( $id ) ), esc_html( wp_strip_all_tags( get_the_title( $id ) ) ) ), $related ) );
+	$link = '';
+	$tag  = in_array( $attributes['tag'], array( 'p', 'span', 'div', 'h2', 'h3', 'h4', 'h5', 'h6' ), true ) ? $attributes['tag'] : 'p';
 } elseif ( 'url' === ( $field['type'] ?? '' ) ) {
 	$html = sprintf( '<a href="%1$s">%1$s</a>', esc_url( $value ) );
 	$link = '';

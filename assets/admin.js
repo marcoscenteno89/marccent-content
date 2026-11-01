@@ -1,8 +1,9 @@
 /*
  * Marccent Content's admin screens, plain JS on WordPress's own packages (no build), drawn into #mcc-admin by
  * inc/admin.php; its data-screen says which:
- * - groups: Fields → Field groups. The list, and a group's editor: its name, whether it repeats, where it goes (post
- *   types, some of their posts by slug, the site) and its fields (label, name, type, help, options, prefix, suffix).
+ * - group: Fields → Field groups, adding or editing one (the list is WordPress's list table, inc/list-table.php): its
+ *   name, whether it repeats, where it goes (post types, some of their posts by slug, the site) and its fields, each an
+ *   accordion (label, key, type, help, choices, prefix, suffix; a relation's post type and whether it holds several).
  * - types: Fields → Post types. The list, and a type's editor: its names, URL, icon, archive, search, what its editor
  *   has, and its taxonomies.
  * - site: Site content. The groups on the site, with the same controls as beside a post (window.marccentContentUI,
@@ -21,6 +22,7 @@
 	const TYPES = [
 		opt( 'Text', 'string' ), opt( 'Text, several lines', 'text' ), opt( 'Number', 'number' ), opt( 'Link (URL)', 'url' ),
 		opt( 'Email', 'email' ), opt( 'Date', 'date' ), opt( 'Yes / No', 'boolean' ), opt( 'Image', 'image' ), opt( 'Choice from a list', 'select' ),
+		opt( 'Relation (another post)', 'relation' ),
 	];
 	const SUPPORTS = [ [ 'title', 'Title' ], [ 'editor', 'Content (blocks)' ], [ 'thumbnail', 'Featured image' ], [ 'excerpt', 'Excerpt' ], [ 'page-attributes', 'Order (and parent)' ], [ 'revisions', 'Revisions' ] ];
 
@@ -54,85 +56,148 @@
 
 	/* Field groups */
 
-	// Where a group goes, in words: "Pages: gallery · Posts · The site".
-	const whereOf = ( on, postTypes ) => {
-		const byType = {};
-		on.forEach( ( o ) => {
-			if ( o === 'options' ) return;
-			const [ type, slug ] = o.split( ':' );
-			byType[ type ] = byType[ type ] || [];
-			if ( slug ) byType[ type ].push( slug );
-		} );
-		return [
-			...Object.entries( byType ).map( ( [ type, slugs ] ) => `${ postTypes[ type ] || type }${ slugs.length ? `: ${ slugs.join( ', ' ) }` : '' }` ),
-			...( on.includes( 'options' ) ? [ 'The site (Site content)' ] : [] ),
-		].join( ' · ' ) || '—';
-	};
-
-	const GroupsScreen = () => {
+	// Adding or editing one group (Fields → Field groups' list is WordPress's list table: inc/list-table.php). Saving
+	// goes back to the list.
+	const GroupScreen = () => {
 		const [ state, save ] = useSpec();
-		const [ editing, setEditing ] = useState( null ); // { name: original name or '', group }
 		const [ errors, setErrors ] = useState( [] );
-		const [ notice, setNotice ] = useState( '' );
 		if ( ! state ) return el( Spinner );
 		const { spec, postTypes } = state;
-		const put = ( groups, message ) => save( { ...spec, groups } ).then( () => {
-			setEditing( null );
-			setErrors( [] );
-			setNotice( message );
-		}, ( e ) => setErrors( errorsOf( e ) ) );
-
-		if ( editing ) {
-			return el( GroupEditor, {
-				...editing, postTypes, errors, setErrors,
-				taken: Object.keys( spec.groups ).filter( ( n ) => n !== editing.name ),
-				onCancel: () => {
-					setEditing( null );
-					setErrors( [] );
-				},
-				onSave: ( name, group ) => {
-					// Keep the groups' order; a renamed group stays where it was.
-					const entries = Object.entries( spec.groups );
-					const at = entries.findIndex( ( [ n ] ) => n === editing.name );
-					if ( at < 0 ) entries.push( [ name, group ] );
-					else entries[ at ] = [ name, group ];
-					put( Object.fromEntries( entries ), `Saved “${ group.label }”.` );
-				},
-			} );
+		const name = root.dataset.name || '';
+		const back = ( notice ) => window.location.assign( notice ? `${ root.dataset.list }&${ notice }` : root.dataset.list );
+		if ( name && ! spec.groups[ name ] ) {
+			return el( Notice, { status: 'error', isDismissible: false }, `There is no field group “${ name }”. `, el( 'a', { href: root.dataset.list }, 'Back to the field groups' ) );
 		}
+		return el( GroupEditor, {
+			name, group: name ? spec.groups[ name ] : { label: '', on: [], fields: {} }, postTypes, errors, setErrors,
+			taken: Object.keys( spec.groups ).filter( ( n ) => n !== name ),
+			onCancel: () => back(),
+			onSave: ( key, group ) => {
+				// Keep the groups' order; a renamed group stays where it was.
+				const entries = Object.entries( spec.groups );
+				const at = entries.findIndex( ( [ n ] ) => n === name );
+				if ( at < 0 ) entries.push( [ key, group ] );
+				else entries[ at ] = [ key, group ];
+				save( { ...spec, groups: Object.fromEntries( entries ) } ).then( () => back( 'saved=1' ), ( e ) => {
+					setErrors( errorsOf( e ) );
+					window.scrollTo( 0, 0 );
+				} );
+			},
+		} );
+	};
 
-		const groups = Object.entries( spec.groups );
-		return page( 'Field groups',
-			el( Button, { variant: 'secondary', className: 'page-title-action', onClick: () => setEditing( { name: '', group: { label: '', on: [], fields: {} } } ) }, 'Add field group' ),
-			notice && el( Notice, { status: 'success', onRemove: () => setNotice( '' ) }, notice ),
-			el( Errors, { list: errors, onRemove: () => setErrors( [] ) } ),
-			el( 'p', null, 'A field group is a set of fields (an office: address, phone, latitude, longitude) put on a kind of post, on some pages, or on the whole site. One that repeats is a list of rows, like a gallery’s photos, that a Loop block can show.' ),
-			groups.length === 0
-				? el( 'p', null, el( 'em', null, 'No field groups yet.' ) )
-				: el( 'table', { className: 'wp-list-table widefat fixed striped' },
-					el( 'thead', null, el( 'tr', null, ...[ 'Group', 'Where', 'Fields', 'Repeats' ].map( ( t ) => el( 'th', { key: t }, t ) ) ) ),
-					el( 'tbody', null, groups.map( ( [ name, g ] ) => el( 'tr', { key: name },
-						el( 'td', null,
-							el( 'strong', null, el( 'a', { href: '#', onClick: ( e ) => {
-								e.preventDefault();
-								setEditing( { name, group: g } );
-							} }, g.label || name ) ),
-							el( 'div', null, el( 'code', null, name ) ),
-							el( 'div', { className: 'row-actions visible' },
-								el( Button, { variant: 'link', onClick: () => setEditing( { name, group: g } ) }, 'Edit' ), ' | ',
-								el( Button, { variant: 'link', isDestructive: true, onClick: () => {
-									// eslint-disable-next-line no-alert
-									if ( window.confirm( `Delete “${ g.label || name }”? The values already saved stay in the database, but nothing shows or edits them any more.` ) ) {
-										put( Object.fromEntries( groups.filter( ( [ n ] ) => n !== name ) ), `Deleted “${ g.label || name }”.` );
-									}
-								} }, 'Delete' )
-							)
-						),
-						el( 'td', null, whereOf( g.on || [], postTypes ) ),
-						el( 'td', null, Object.entries( g.fields || {} ).map( ( [ k, f ] ) => f.label || k ).join( ', ' ) || '—' ),
-						el( 'td', null, g.repeat ? 'Yes' : 'No' )
-					) ) )
-				)
+	// The field types as tiles (a Dashicon each), and what a field of each shows in its header.
+	const TYPE_ICONS = { string: 'editor-textcolor', text: 'editor-paragraph', number: 'calculator', url: 'admin-links', email: 'email',
+		date: 'calendar-alt', boolean: 'yes-alt', image: 'format-image', select: 'list-view', relation: 'networking' };
+	const icon = ( name ) => el( 'span', { className: `dashicons dashicons-${ name }`, 'aria-hidden': true } );
+	const typeLabel = ( type ) => TYPES.find( ( t ) => t.value === type )?.label || type;
+
+	// The editor's own styles: two columns (the fields, then where it goes and saving), a field per accordion.
+	const STYLE = `
+		.mcc-editor { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; margin-top: 16px; }
+		@media (max-width: 960px) { .mcc-editor { grid-template-columns: 1fr; } .mcc-side { position: static !important; } }
+		.mcc-side { position: sticky; top: 46px; display: grid; gap: 16px; }
+		.mcc-side .components-card { margin: 0 !important; }
+		.mcc-back { display: inline-flex; align-items: center; gap: 2px; text-decoration: none; margin-top: 8px; }
+		.mcc-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+		.mcc-acc { border: 1px solid #dcdcde; border-radius: 4px; background: #fff; margin-bottom: 8px; }
+		.mcc-acc.is-open { border-color: #c3c4c7; box-shadow: 0 1px 3px rgba(0, 0, 0, .06); }
+		.mcc-acc.has-error { border-color: #d63638; }
+		.mcc-acc__head { display: flex; align-items: center; gap: 4px; padding: 4px 8px 4px 12px; }
+		.mcc-acc__toggle { flex: 1; display: flex; align-items: center; gap: 10px; min-width: 0; background: none; border: 0; padding: 8px 0; text-align: left; cursor: pointer; color: inherit; }
+		.mcc-acc__toggle:focus-visible { outline: 2px solid var(--wp-admin-theme-color, #2271b1); outline-offset: 2px; }
+		.mcc-acc__num { flex: none; width: 24px; height: 24px; border-radius: 50%; background: #f0f0f1; font-size: 11px; display: grid; place-items: center; }
+		.mcc-acc__name { display: grid; min-width: 0; }
+		.mcc-acc__label { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.mcc-acc__key { color: #646970; font-size: 12px; font-family: monospace; }
+		.mcc-acc__chevron { transition: transform .15s; color: #646970; }
+		.mcc-acc.is-open .mcc-acc__chevron { transform: rotate(180deg); }
+		.mcc-acc__head .components-button.is-small.has-icon:not(:hover) { color: #646970; }
+		.mcc-acc__body { border-top: 1px solid #f0f0f1; padding: 16px; display: grid; gap: 4px; }
+		.mcc-badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; background: #f0f6fc; color: #0a4b78; border-radius: 2px; padding: 2px 8px; font-size: 12px; margin-left: auto; }
+		.mcc-badge .dashicons { font-size: 16px; width: 16px; height: 16px; }
+		.mcc-types { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 8px; }
+		.mcc-type { display: flex; align-items: center; gap: 8px; border: 1px solid #dcdcde; border-radius: 4px; padding: 8px 10px; background: #fff; cursor: pointer; font-size: 13px; text-align: left; color: inherit; }
+		.mcc-type:hover { border-color: #8c8f94; }
+		.mcc-type.is-selected { border-color: var(--wp-admin-theme-color, #2271b1); box-shadow: 0 0 0 1px var(--wp-admin-theme-color, #2271b1); background: #f0f6fc; }
+		.mcc-sub { font-size: 11px; text-transform: uppercase; color: #646970; font-weight: 600; margin: 12px 0 8px; letter-spacing: .02em; }
+		.mcc-tokens { background: #f6f7f7; border-radius: 2px; padding: 8px; font-size: 12px; color: #50575e; }
+		.mcc-empty { border: 2px dashed #dcdcde; border-radius: 4px; padding: 24px; text-align: center; color: #646970; margin-bottom: 8px; }
+		.mcc-where { display: grid; gap: 2px; }
+		.mcc-where .components-base-control { margin: 0; }
+		.mcc-chip { display: inline-block; background: #f0f0f1; border-radius: 2px; padding: 1px 6px; margin: 0 4px 4px 0; font-size: 12px; }
+	`;
+
+	// A field without a label shows its key as the server does (mcc_normalize_fields): before_photo → Before photo.
+	const labelOf = ( k ) => ( k ? k.charAt( 0 ).toUpperCase() + k.slice( 1 ).replace( /_/g, ' ' ) : '' );
+	let lastId = 0;
+	const fieldOf = ( k, f, open = false ) => ( {
+		id: ++lastId, open, key: k, was: k, label: f.label || labelOf( k ), type: f.type || 'string', help: f.help || '',
+		options: ( f.options || [] ).join( '\n' ), prefix: f.prefix || '', suffix: f.suffix || '', to: f.to || '', multiple: !! f.multiple,
+	} );
+
+	// What a field's settings get wrong, for its accordion and the notice at the top.
+	const fieldProblems = ( f, i, keys ) => [
+		! f.label.trim() || ! keys[ i ] ? 'Give it a label and a key.' : '',
+		keys[ i ] && keys.indexOf( keys[ i ] ) !== i ? `Another field has the key “${ keys[ i ] }”.` : '',
+		f.type === 'select' && ! f.options.trim() ? 'List its choices, one per line.' : '',
+		f.type === 'relation' && ! f.to ? 'Choose the post type it relates to.' : '',
+	].filter( Boolean );
+
+	// One field: its header (number, label, key, type; move, duplicate, remove) and, open, its settings.
+	const FieldItem = ( { f, i, count, problems, postTypes, set, onMove, onDuplicate, onRemove } ) => {
+		const k = keyOf( f.key );
+		const bodyId = `mcc-field-${ f.id }`;
+		const badge = f.type === 'relation' && f.to ? `${ typeLabel( f.type ) } → ${ postTypes[ f.to ] || f.to }${ f.multiple ? ' (several)' : '' }` : typeLabel( f.type );
+		return el( 'div', { className: [ 'mcc-acc', f.open && 'is-open', problems.length && 'has-error' ].filter( Boolean ).join( ' ' ) },
+			el( 'div', { className: 'mcc-acc__head' },
+				el( 'button', { type: 'button', className: 'mcc-acc__toggle', 'aria-expanded': f.open, 'aria-controls': bodyId, onClick: () => set( { open: ! f.open } ) },
+					el( 'span', { className: 'mcc-acc__chevron dashicons dashicons-arrow-down-alt2', 'aria-hidden': true } ),
+					el( 'span', { className: 'mcc-acc__num' }, i + 1 ),
+					el( 'span', { className: 'mcc-acc__name' },
+						el( 'span', { className: 'mcc-acc__label' }, f.label || el( 'em', null, 'New field' ) ),
+						el( 'span', { className: 'mcc-acc__key' }, k || '—' )
+					),
+					el( 'span', { className: 'mcc-badge' }, icon( TYPE_ICONS[ f.type ] ), badge )
+				),
+				el( Button, { size: 'small', icon: 'arrow-up-alt', label: 'Move up', disabled: i === 0, onClick: () => onMove( -1 ) } ),
+				el( Button, { size: 'small', icon: 'arrow-down-alt', label: 'Move down', disabled: i === count - 1, onClick: () => onMove( 1 ) } ),
+				el( Button, { size: 'small', icon: 'admin-page', label: 'Duplicate', onClick: onDuplicate } ),
+				el( Button, { size: 'small', icon: 'trash', label: 'Remove', isDestructive: true, onClick: onRemove } )
+			),
+			f.open && el( 'div', { className: 'mcc-acc__body', id: bodyId },
+				problems.length > 0 && el( Notice, { status: 'error', isDismissible: false }, problems.join( ' ' ) ),
+				Row(
+					el( TextControl, { label: 'Label', value: f.label, help: 'What editors see beside the post.', onChange: ( v ) => set( { label: v, ...( f.was ? {} : { key: keyOf( v ) } ) } ) } ),
+					el( TextControl, { label: 'Key', value: f.key, help: `In blocks: {{ ${ k || 'key' } }}`, onChange: ( v ) => set( { key: keyOf( v ) } ) } )
+				),
+				f.was && k !== f.was && el( Notice, { status: 'warning', isDismissible: false }, `Renamed from “${ f.was }”: what’s saved under the old key won’t show, and tokens using it stop working.` ),
+				el( 'div', { className: 'mcc-sub' }, 'Type' ),
+				el( 'div', { className: 'mcc-types', role: 'radiogroup', 'aria-label': 'Type' }, TYPES.map( ( t ) => el( 'button', {
+					key: t.value, type: 'button', role: 'radio', 'aria-checked': f.type === t.value,
+					className: `mcc-type${ f.type === t.value ? ' is-selected' : '' }`, onClick: () => set( { type: t.value } ),
+				}, icon( TYPE_ICONS[ t.value ] ), t.label ) ) ),
+				f.type === 'select' && el( TextareaControl, { label: 'Choices, one per line', value: f.options, rows: 5, onChange: ( options ) => set( { options } ) } ),
+				f.type === 'relation' && el( Fragment, null,
+					Row(
+						el( SelectControl, {
+							label: 'Related to', value: f.to,
+							options: [ opt( 'Choose a post type…', '' ), ...Object.entries( postTypes ).map( ( [ type, l ] ) => opt( l, type ) ) ],
+							onChange: ( to ) => set( { to } ),
+						} ),
+						el( ToggleControl, { label: 'Several (many to many)', checked: f.multiple, help: f.multiple ? 'A list of posts, in an order.' : 'One post (a foreign key).', onChange: ( multiple ) => set( { multiple } ) } )
+					),
+					el( 'div', { className: 'mcc-tokens' }, `{{ ${ k || 'key' } }} is the title; {{ ${ k || 'key' }.<any of its keys> }} goes through it. A Loop’s “Related” lists the posts related either way.` )
+				),
+				[ 'string', 'number' ].includes( f.type ) && el( Fragment, null,
+					el( 'div', { className: 'mcc-sub' }, 'Shown around the value' ),
+					Row(
+						el( TextControl, { label: 'Before', value: f.prefix, help: 'e.g. $', onChange: ( prefix ) => set( { prefix } ) } ),
+						el( TextControl, { label: 'After', value: f.suffix, help: 'e.g.  sq ft', onChange: ( suffix ) => set( { suffix } ) } )
+					)
+				),
+				el( TextControl, { label: 'Help for editors (optional)', value: f.help, onChange: ( help ) => set( { help } ) } )
+			)
 		);
 	};
 
@@ -154,11 +219,12 @@
 		};
 		const [ where, setWhere ] = useState( initialWhere );
 		const [ site, setSite ] = useState( ( group.on || [] ).includes( 'options' ) );
-		const [ fields, setFields ] = useState( () => Object.entries( group.fields || {} ).map( ( [ k, f ] ) => ( {
-			key: k, was: k, label: f.label || k, type: f.type || 'string', help: f.help || '',
-			options: ( f.options || [] ).join( '\n' ), prefix: f.prefix || '', suffix: f.suffix || '',
-		} ) ) );
+		// A new group's first field starts open; a saved group's fields start closed.
+		const [ fields, setFields ] = useState( () => Object.entries( group.fields || {} ).map( ( [ k, f ] ) => fieldOf( k, f ) ) );
+		const [ tried, setTried ] = useState( false ); // after a save that failed, each field shows what's wrong
 		const setField = ( i, patch ) => setFields( fields.map( ( f, j ) => ( j === i ? { ...f, ...patch } : f ) ) );
+		const keys = fields.map( ( f ) => keyOf( f.key ) );
+		const problemsOf = fields.map( ( f, i ) => ( tried ? fieldProblems( f, i, keys ) : [] ) );
 
 		const save = () => {
 			const problems = [];
@@ -166,18 +232,16 @@
 			if ( ! label.trim() ) problems.push( 'Give the group a name.' );
 			if ( ! k ) problems.push( 'Give the group a key (lowercase letters, numbers, underscores).' );
 			if ( taken.includes( k ) ) problems.push( `Another group already has the key “${ k }”.` );
-			const keys = fields.map( ( f ) => keyOf( f.key ) );
-			fields.forEach( ( f, i ) => {
-				if ( ! f.label.trim() || ! keys[ i ] ) problems.push( `Field ${ i + 1 }: give it a label and a key.` );
-				if ( keys.indexOf( keys[ i ] ) !== i ) problems.push( `Two fields have the key “${ keys[ i ] }”.` );
-				if ( f.type === 'select' && ! f.options.trim() ) problems.push( `${ f.label || `Field ${ i + 1 }` }: list its choices, one per line.` );
-			} );
+			const bad = fields.map( ( f, i ) => fieldProblems( f, i, keys ) );
+			bad.forEach( ( p, i ) => p.length && problems.push( `${ fields[ i ].label || `Field ${ i + 1 }` }: ${ p.join( ' ' ) }` ) );
 			const on = [
 				...Object.entries( where ).filter( ( [ , w ] ) => w.on ).flatMap( ( [ type, w ] ) => ( w.slugs.length ? w.slugs.map( ( s ) => `${ type }:${ s }` ) : [ type ] ) ),
 				...( site ? [ 'options' ] : [] ),
 			];
 			if ( ! on.length ) problems.push( 'Choose where the group goes.' );
 			if ( problems.length ) {
+				setTried( true );
+				setFields( fields.map( ( f, i ) => ( bad[ i ].length ? { ...f, open: true } : f ) ) ); // open the ones to fix
 				setErrors( problems );
 				window.scrollTo( 0, 0 );
 				return;
@@ -188,6 +252,10 @@
 				const field = { label: f.label.trim(), type: f.type };
 				if ( f.help.trim() ) field.help = f.help.trim();
 				if ( f.type === 'select' ) field.options = f.options.split( '\n' ).map( ( o ) => o.trim() ).filter( Boolean );
+				if ( f.type === 'relation' ) {
+					field.to = f.to;
+					if ( f.multiple ) field.multiple = true;
+				}
 				if ( [ 'string', 'number' ].includes( f.type ) && f.prefix ) field.prefix = f.prefix;
 				if ( [ 'string', 'number' ].includes( f.type ) && f.suffix ) field.suffix = f.suffix;
 				out.fields[ keys[ i ] ] = field;
@@ -195,60 +263,83 @@
 			onSave( k, out );
 		};
 
-		const renamed = fields.filter( ( f ) => f.was && keyOf( f.key ) !== f.was );
-		return page( isNew ? 'Add field group' : `Edit “${ group.label || name }”`, null,
+		const addField = () => setFields( [ ...fields.map( ( f ) => ( { ...f, open: false } ) ), fieldOf( '', { label: '' }, true ) ] );
+		const allOpen = fields.length > 0 && fields.every( ( f ) => f.open );
+		const chosen = Object.entries( where ).filter( ( [ , w ] ) => w.on );
+
+		return el( Fragment, null,
+			el( 'style', null, STYLE ),
+			el( 'a', { href: '#', className: 'mcc-back', onClick: ( e ) => {
+				e.preventDefault();
+				onCancel();
+			} }, icon( 'arrow-left-alt2' ), 'Field groups' ),
+			el( 'h1', null, isNew ? 'Add field group' : `Edit “${ group.label || name }”` ),
 			el( Errors, { list: errors, onRemove: () => setErrors( [] ) } ),
-			section( 'Group',
-				Row(
-					el( TextControl, { label: 'Name', value: label, help: 'What editors see: Office, Photos, Team.', onChange: ( v ) => {
-						setLabel( v );
-						if ( isNew ) setKey( keyOf( v ) );
-					} } ),
-					el( TextControl, { label: 'Key', value: key, help: repeat ? `A Loop’s “Repeat for” (${ keyOf( key ) || 'key' }); in its item, each field: {{ field }}.` : site ? `Anywhere: {{ ${ keyOf( key ) || 'key' }.field }}` : 'Its fields show in Loops and tokens by their own keys: {{ field }}.', onChange: ( v ) => setKey( keyOf( v ) ) } )
+			el( 'div', { className: 'mcc-editor' },
+				el( 'div', null,
+					el( Card, null, el( CardBody, null,
+						Row(
+							el( TextControl, { label: 'Name', value: label, help: 'What editors see: Office, Photos, Team.', onChange: ( v ) => {
+								setLabel( v );
+								if ( isNew ) setKey( keyOf( v ) );
+							} } ),
+							el( TextControl, { label: 'Key', value: key, help: repeat ? `A Loop’s “Repeat for”: ${ keyOf( key ) || 'key' }.` : site ? `Anywhere: {{ ${ keyOf( key ) || 'key' }.field }}` : 'Its fields show by their own keys: {{ field }}.', onChange: ( v ) => setKey( keyOf( v ) ) } )
+						),
+						! isNew && keyOf( key ) !== name && el( Notice, { status: 'warning', isDismissible: false }, `Changing the key from “${ name }” disconnects what’s saved under it, and Loops or tokens that use “${ name }” stop working.` ),
+						el( ToggleControl, { label: 'Repeats: a list of rows (a gallery’s photos, offices, team members)', checked: repeat, onChange: setRepeat } )
+					) ),
+					el( 'div', { className: 'mcc-bar', style: { marginTop: '24px' } },
+						el( 'h2', { style: { margin: 0 } }, `Fields (${ fields.length })` ),
+						fields.length > 0 && el( Button, { variant: 'tertiary', size: 'small', onClick: () => setFields( fields.map( ( f ) => ( { ...f, open: ! allOpen } ) ) ) }, allOpen ? 'Collapse all' : 'Expand all' )
+					),
+					fields.length === 0 && el( 'div', { className: 'mcc-empty' }, 'No fields yet. Add the first one: a phone, a price, an image, a relation to another post…' ),
+					fields.map( ( f, i ) => el( FieldItem, {
+						key: f.id, f, i, count: fields.length, problems: problemsOf[ i ], postTypes,
+						set: ( patch ) => setField( i, patch ),
+						onMove: ( by ) => setFields( move( fields, i, by ) ),
+						onDuplicate: () => setFields( [ ...fields.slice( 0, i + 1 ).map( ( x ) => ( { ...x, open: false } ) ),
+							{ ...f, id: ++lastId, open: true, was: '', key: keyOf( `${ f.key }_copy` ), label: `${ f.label } (copy)` }, ...fields.slice( i + 1 ).map( ( x ) => ( { ...x, open: false } ) ) ] ),
+						onRemove: () => {
+							// eslint-disable-next-line no-alert
+							if ( ! f.was || window.confirm( `Remove “${ f.label || f.key }”? What’s saved under it stays in the database, but nothing shows or edits it any more.` ) ) {
+								setFields( fields.filter( ( x, j ) => j !== i ) );
+							}
+						},
+					} ) ),
+					el( Button, { variant: 'secondary', icon: 'plus-alt2', onClick: addField, style: { marginTop: '4px' } }, 'Add field' )
 				),
-				! isNew && keyOf( key ) !== name && el( Notice, { status: 'warning', isDismissible: false }, `Changing the key from “${ name }” disconnects what’s saved under it, and Loops or tokens that use “${ name }” stop working.` ),
-				el( ToggleControl, { label: 'Repeats: a list of rows (a gallery’s photos, offices, team members)', checked: repeat, onChange: setRepeat } )
-			),
-			section( 'Where it goes',
-				Object.entries( postTypes ).map( ( [ type, typeLabel ] ) => {
-					const w = where[ type ] || { on: false, slugs: [] };
-					const setW = ( patch ) => setWhere( { ...where, [ type ]: { ...w, ...patch } } );
-					return el( 'div', { key: type, style: { marginBottom: '8px' } },
-						el( CheckboxControl, { label: typeLabel, checked: w.on, onChange: ( on ) => setW( { on } ) } ),
-						w.on && el( 'div', { style: { marginLeft: '28px', maxWidth: '28rem' } }, el( TextControl, {
-							label: 'Only these (their slugs, comma-separated)', help: `Empty: every one of the ${ typeLabel.toLowerCase() }.`,
-							value: w.slugs.join( ', ' ), onChange: ( v ) => setW( { slugs: v.split( ',' ).map( ( s ) => s.trim() ).filter( Boolean ) } ),
-						} ) )
-					);
-				} ),
-				el( CheckboxControl, { label: 'The whole site (edited under Site content)', checked: site, onChange: setSite } )
-			),
-			section( 'Fields',
-				renamed.length > 0 && el( Notice, { status: 'warning', isDismissible: false }, `Renamed: ${ renamed.map( ( f ) => `“${ f.was }” → “${ keyOf( f.key ) }”` ).join( ', ' ) }. What’s saved under the old key won’t show, and tokens using it stop working.` ),
-				fields.length === 0 && el( 'p', null, el( 'em', null, 'No fields yet.' ) ),
-				fields.map( ( f, i ) => el( 'div', { key: i, style: { borderTop: i ? '1px solid #ddd' : 0, padding: '12px 0' } },
-					Row(
-						el( TextControl, { label: 'Label', value: f.label, onChange: ( v ) => setField( i, { label: v, ...( f.was ? {} : { key: keyOf( v ) } ) } ) } ),
-						el( TextControl, { label: 'Key', value: f.key, onChange: ( v ) => setField( i, { key: keyOf( v ) } ) } ),
-						el( SelectControl, { label: 'Type', value: f.type, options: TYPES, onChange: ( type ) => setField( i, { type } ) } )
+				el( 'div', { className: 'mcc-side' },
+					el( Card, null,
+						el( CardHeader, null, el( 'strong', null, isNew ? 'Create' : 'Save' ) ),
+						el( CardBody, null,
+							el( 'p', { style: { marginTop: 0 } }, chosen.length || site
+								? [ ...chosen.map( ( [ type ] ) => el( 'span', { key: type, className: 'mcc-chip' }, postTypes[ type ] || type ) ), site && el( 'span', { key: 'site', className: 'mcc-chip' }, 'The site' ) ]
+								: el( 'em', null, 'Not placed anywhere yet.' ) ),
+							el( 'div', { style: { display: 'flex', gap: '8px' } },
+								el( Button, { variant: 'primary', onClick: save }, isNew ? 'Create field group' : 'Save field group' ),
+								el( Button, { variant: 'tertiary', onClick: onCancel }, 'Cancel' )
+							)
+						)
 					),
-					Row(
-						el( TextControl, { label: 'Help (optional)', value: f.help, onChange: ( help ) => setField( i, { help } ) } ),
-						[ 'string', 'number' ].includes( f.type ) && el( TextControl, { label: 'Before the value', value: f.prefix, help: 'e.g. $', onChange: ( prefix ) => setField( i, { prefix } ) } ),
-						[ 'string', 'number' ].includes( f.type ) && el( TextControl, { label: 'After the value', value: f.suffix, help: 'e.g.  sq ft', onChange: ( suffix ) => setField( i, { suffix } ) } )
-					),
-					f.type === 'select' && el( TextareaControl, { label: 'Choices, one per line', value: f.options, rows: 4, onChange: ( options ) => setField( i, { options } ) } ),
-					el( 'div', { style: { display: 'flex', gap: '8px' } },
-						el( Button, { variant: 'secondary', size: 'small', disabled: i === 0, onClick: () => setFields( move( fields, i, -1 ) ) }, 'Up' ),
-						el( Button, { variant: 'secondary', size: 'small', disabled: i === fields.length - 1, onClick: () => setFields( move( fields, i, 1 ) ) }, 'Down' ),
-						el( Button, { variant: 'link', isDestructive: true, onClick: () => setFields( fields.filter( ( x, j ) => j !== i ) ) }, 'Remove' )
+					el( Card, null,
+						el( CardHeader, null, el( 'strong', null, 'Where it goes' ) ),
+						el( CardBody, { className: 'mcc-where' },
+							Object.entries( postTypes ).map( ( [ type, typeLabelText ] ) => {
+								const w = where[ type ] || { on: false, slugs: [] };
+								const setW = ( patch ) => setWhere( { ...where, [ type ]: { ...w, ...patch } } );
+								return el( 'div', { key: type },
+									el( CheckboxControl, { label: typeLabelText, checked: w.on, onChange: ( on ) => setW( { on } ) } ),
+									w.on && el( 'div', { style: { margin: '4px 0 8px 28px' } }, el( TextControl, {
+										label: 'Only these (slugs)', help: `Empty: every one of the ${ typeLabelText.toLowerCase() }.`,
+										value: w.slugs.join( ', ' ), onChange: ( v ) => setW( { slugs: v.split( ',' ).map( ( s ) => s.trim() ).filter( Boolean ) } ),
+									} ) )
+								);
+							} ),
+							el( 'hr', { style: { margin: '8px 0' } } ),
+							el( CheckboxControl, { label: 'The whole site (Site content)', checked: site, onChange: setSite } )
+						)
 					)
-				) ),
-				el( Button, { variant: 'secondary', onClick: () => setFields( [ ...fields, { key: '', was: '', label: '', type: 'string', help: '', options: '', prefix: '', suffix: '' } ] ) }, 'Add field' )
-			),
-			actions(
-				el( Button, { variant: 'primary', onClick: save }, 'Save field group' ),
-				el( Button, { variant: 'tertiary', onClick: onCancel }, 'Cancel' )
+				)
 			)
 		);
 	};
@@ -409,6 +500,6 @@
 		);
 	};
 
-	const screens = { groups: GroupsScreen, types: TypesScreen, site: SiteScreen };
-	wp.element.createRoot( root ).render( el( screens[ root.dataset.screen ] || GroupsScreen ) );
+	const screens = { group: GroupScreen, types: TypesScreen, site: SiteScreen };
+	wp.element.createRoot( root ).render( el( screens[ root.dataset.screen ] || GroupScreen ) );
 } )( window.wp );
