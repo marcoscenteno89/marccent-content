@@ -16,11 +16,11 @@ defined( 'ABSPATH' ) || exit;
 const MCC_DIR  = __DIR__;
 const MCC_FILE = __FILE__;
 
-require MCC_DIR . '/inc/types.php';    // the spec: post types, taxonomies and fields, registered
+require MCC_DIR . '/inc/types.php';    // the spec: post types, taxonomies and field groups, registered
 require MCC_DIR . '/inc/values.php';   // a post's value by key: title, link, image, terms, a field…
 require MCC_DIR . '/inc/bindings.php'; // the values in blocks: the marccent/field binding source and {{ tokens }}
 require MCC_DIR . '/inc/blocks.php';   // the Loop and Field blocks, and the editor's fields panel
-require MCC_DIR . '/inc/settings.php'; // Settings → Content
+require MCC_DIR . '/inc/admin.php';    // Fields → Field groups, Post types, JSON; Site content; the export
 
 register_activation_hook( __FILE__, function () {
 	mcc_register_types();

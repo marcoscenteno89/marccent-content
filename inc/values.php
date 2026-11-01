@@ -6,6 +6,10 @@
  *   image, image:<size> (the featured image's URL; large by default), image_alt
  *   terms:<taxonomy> (the post's terms, comma-separated)
  *   <field>, <field>:<size> for an image field: one of the spec's fields (inc/types.php), with its prefix and suffix
+ *   <image field>:alt: the image's alt text
+ *   <group>.<field>: a field of a group that doesn't repeat (the post's, else the site's): "office.phone"
+ *
+ * Inside a Loop of a group's rows, the row's fields come first: "caption", "image:medium".
  *
  * and a format after a bar, "price | currency": currency (the spec's symbol, 2 decimals), number, date, upper,
  * lower, words:<n> (the first n words), raw (a field without its prefix and suffix).
@@ -19,15 +23,53 @@ function mcc_parse_key( string $key ): array {
 	return array( $parts[0], $parts[1] ?? '' );
 }
 
+// The Loop's rows being rendered, innermost last: [ 'fields' => the group's fields, 'values' => the row ].
+$GLOBALS['mcc_rows'] = array();
+
+function mcc_row(): ?array {
+	return $GLOBALS['mcc_rows'] ? end( $GLOBALS['mcc_rows'] ) : null;
+}
+
+// The field a key names, where the value comes from: the current row's, a group's ("office.phone") or the post's.
+function mcc_field_def( int $post_id, string $key ): ?array {
+	$name = explode( ':', mcc_parse_key( $key )[0], 2 )[0];
+	$row  = mcc_row();
+	if ( $row && isset( $row['fields'][ $name ] ) ) {
+		return $row['fields'][ $name ];
+	}
+	if ( str_contains( $name, '.' ) ) {
+		[ $group, $sub ] = explode( '.', $name, 2 );
+		return mcc_groups()[ $group ]['fields'][ $sub ] ?? null;
+	}
+	return $post_id ? ( mcc_fields( (string) get_post_type( $post_id ) )[ $name ] ?? null ) : null;
+}
+
 function mcc_value( int $post_id, string $key, string $format = '' ): string {
+	[ $name, $arg ] = array_pad( explode( ':', $key, 2 ), 2, '' );
+
+	$row = mcc_row();
+	if ( $row && isset( $row['fields'][ $name ] ) ) {
+		$field = $row['fields'][ $name ];
+		return mcc_format( mcc_affix( mcc_display_value( $row['values'][ $name ] ?? '', $field, $arg ), $field, $format ), $format );
+	}
+	if ( str_contains( $name, '.' ) ) {
+		[ $group, $sub ] = explode( '.', $name, 2 );
+		$g     = mcc_groups()[ $group ] ?? null;
+		$field = $g['fields'][ $sub ] ?? null;
+		if ( ! $field || $g['repeat'] ) {
+			return '';
+		}
+		$values = mcc_group_value( $group, $post_id );
+		return mcc_format( mcc_affix( mcc_display_value( $values[ $sub ] ?? '', $field, $arg ), $field, $format ), $format );
+	}
+
 	$post = get_post( $post_id );
 	if ( ! $post ) {
 		return '';
 	}
 	// A password-protected post shows only its title, link and the like until its password is given.
 	$hidden = post_password_required( $post );
-	[ $name, $arg ] = array_pad( explode( ':', $key, 2 ), 2, '' );
-	$field          = mcc_fields( $post->post_type )[ $name ] ?? null;
+	$field  = mcc_fields( $post->post_type )[ $name ] ?? null;
 	$text           = fn( $s ) => trim( html_entity_decode( wp_strip_all_tags( (string) $s ), ENT_QUOTES, 'UTF-8' ) );
 
 	switch ( true ) {
@@ -72,10 +114,7 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 			$value = is_array( $terms ) ? implode( ', ', wp_list_pluck( $terms, 'name' ) ) : '';
 			break;
 		case null !== $field:
-			$value = mcc_field_value( $post->ID, $name, $field, $arg );
-			if ( '' !== $value && 'raw' !== $format && ! in_array( $field['type'], array( 'url', 'image' ), true ) ) {
-				$value = ( $field['prefix'] ?? '' ) . $value . ( $field['suffix'] ?? '' );
-			}
+			$value = mcc_affix( mcc_field_value( $post->ID, $name, $field, $arg ), $field, $format );
 			break;
 		default:
 			$value = '';
@@ -83,11 +122,28 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	return mcc_format( $value, $format );
 }
 
-// A field's saved value as text: an image's URL, Yes / No, a date in the site's format.
+// A field's prefix and suffix around its value (not around a URL or an image, nor with the raw format).
+function mcc_affix( string $value, array $field, string $format ): string {
+	if ( '' === $value || 'raw' === $format || in_array( $field['type'], array( 'url', 'image' ), true ) ) {
+		return $value;
+	}
+	return ( $field['prefix'] ?? '' ) . $value . ( $field['suffix'] ?? '' );
+}
+
 function mcc_field_value( int $post_id, string $name, array $field, string $size = '' ): string {
-	$raw = get_post_meta( $post_id, $name, true );
+	return mcc_display_value( get_post_meta( $post_id, $name, true ), $field, $size );
+}
+
+// A field's saved value as text: an image's URL (or its alt text, "alt"), Yes / No, a date in the site's format.
+function mcc_display_value( $raw, array $field, string $size = '' ): string {
+	if ( is_array( $raw ) || is_object( $raw ) ) {
+		return '';
+	}
 	switch ( $field['type'] ) {
 		case 'image':
+			if ( 'alt' === $size ) {
+				return $raw ? (string) get_post_meta( (int) $raw, '_wp_attachment_image_alt', true ) : '';
+			}
 			return $raw ? (string) wp_get_attachment_image_url( (int) $raw, $size ?: 'large' ) : '';
 		case 'boolean':
 			return $raw ? __( 'Yes', 'marccent-content' ) : __( 'No', 'marccent-content' );

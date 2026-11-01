@@ -3,9 +3,12 @@
  * - Loop: its query and grid settings; the item is designed once, previewing the query's first post (the blocks
  *   inside get its id and type as context), and repeats for every post on the page (blocks/loop/render.php).
  * - Field: one value of the post, previewed from the post's record.
- * - The Fields panel beside a post, for its type's fields (Settings → Content).
+ * - A panel beside a post for each field group on it (Fields → Field groups); a repeating group is a list of rows to
+ *   add, reorder and remove. The field controls are window.marccentContentUI too, for the admin screens (admin.js).
  * - The marccent/field binding source: previews bound blocks and lists the type's values in the Attributes panel.
- * window.marccentContent: { types: [ { name, label, singular, taxonomies: [ { name, label } ], fields: { name: field } } ], currency }.
+ * window.marccentContent: { types: [ { name, label, singular, taxonomies: [ { name, label } ], fields: { name: field } } ],
+ * groups: { name: { label, repeat, on: [ 'page', 'page:gallery', 'options' ], fields } }, currency }; a type's fields are
+ * those of the groups on it that don't repeat.
  */
 ( function ( wp ) {
 	const { createElement: el, Fragment } = wp.element;
@@ -14,15 +17,19 @@
 	const { PanelBody, SelectControl, RangeControl, TextControl, ToggleControl, TextareaControl, Button } = wp.components;
 	const { useSelect } = wp.data;
 	const { useEntityProp } = wp.coreData;
-	const data = window.marccentContent || { types: [], currency: '$' };
+	const data = window.marccentContent || { types: [], groups: {}, currency: '$' };
+	data.groups = data.groups || {};
 
 	const opt = ( label, value ) => ( { label, value } );
 	// White on Marccent blue, like marccent-blocks' own (its src/shared/register.js).
 	const icon = ( src ) => ( { src, foreground: '#fff', background: '#1f64cf' } );
 	const typeOf = ( name ) => data.types.find( ( t ) => t.name === name ) || { name, label: name, singular: name, taxonomies: [], fields: {} };
 
-	// The values a type offers: the post's own, its terms and its fields.
-	const keysOf = ( type ) => {
+	// The values a type offers: the post's own, its terms and its fields; in a Loop of a group's rows, the row's fields.
+	const keysOf = ( type, source ) => {
+		if ( source && data.groups[ source ] ) {
+			return Object.entries( data.groups[ source ].fields ).map( ( [ name, f ] ) => opt( f.label, name ) );
+		}
 		const t = typeOf( type );
 		return [
 			opt( 'Title', 'title' ), opt( 'Excerpt', 'excerpt' ), opt( 'Date', 'date' ), opt( 'Link', 'link' ),
@@ -76,16 +83,32 @@
 		icon: icon( 'update' ),
 		edit( { attributes: a, setAttributes: set } ) {
 			const type = typeOf( a.postType );
-			const first = useSelect( ( select ) => select( 'core' ).getEntityRecords( 'postType', a.postType, { per_page: 1, status: 'publish', orderby: 'date' } ), [ a.postType ] );
+			const group = a.source ? data.groups[ a.source ] : null;
+			const repeating = Object.entries( data.groups ).filter( ( [ , g ] ) => g.repeat );
+			const first = useSelect( ( select ) => ( group ? null : select( 'core' ).getEntityRecords( 'postType', a.postType, { per_page: 1, status: 'publish', orderby: 'date' } ) ), [ a.postType, !! group ] );
 			const postId = first?.[ 0 ]?.id;
 			const blockProps = useBlockProps( { className: 'mcc-loop' } );
 			const inner = useInnerBlocksProps( { className: [ 'grid', `cols-${ a.cols }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
 			const orders = [ opt( 'Date', 'date' ), opt( 'Title', 'title' ), opt( 'Last modified', 'modified' ), opt( 'Menu order', 'menu_order' ), opt( 'Random', 'rand' ),
 				...Object.entries( type.fields ).map( ( [ name, f ] ) => opt( `${ f.label } (field)`, `field:${ name }` ) ) ];
-			const tokens = keysOf( a.postType ).map( ( k ) => `{{ ${ k.value } }}` ).join( '  ' );
+			const tokens = keysOf( a.postType, a.source ).map( ( k ) => `{{ ${ k.value } }}` ).join( '  ' );
+			const sourcePicker = repeating.length > 0 && el( SelectControl, {
+				label: 'Repeat for', value: a.source,
+				options: [ opt( 'Posts', '' ), ...repeating.map( ( [ name, g ] ) => opt( `${ g.label } (rows)`, name ) ) ],
+				onChange: ( source ) => set( { source } ),
+			} );
+			const rowsPanel = group && el( PanelBody, { title: 'Rows' },
+				sourcePicker,
+				el( TextControl, { label: 'From', help: 'A page’s path (gallery, or about/team), or options for the site’s. Empty: the page being viewed.', value: a.from, onChange: ( from ) => set( { from } ) } ),
+				el( TextControl, { label: 'Only rows where', help: 'service=flatwork (equal), featured~home (in a comma-separated list); several joined by &.', value: a.where, onChange: ( where ) => set( { where } ) } ),
+				el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 48, onChange: ( perPage ) => set( { perPage } ) } ),
+				el( RangeControl, { label: 'Skip', value: a.offset, min: 0, max: 20, onChange: ( offset ) => set( { offset } ) } ),
+				el( TextControl, { label: 'When there are none', value: a.empty, onChange: ( empty ) => set( { empty } ) } )
+			);
 			return el( Fragment, null,
 				el( InspectorControls, null,
-					el( PanelBody, { title: 'Query' },
+					rowsPanel || el( PanelBody, { title: 'Query' },
+						sourcePicker,
 						el( SelectControl, { label: 'Post type', value: a.postType, options: data.types.map( ( t ) => opt( t.label, t.name ) ), onChange: ( postType ) => set( { postType, taxonomy: '', terms: '' } ) } ),
 						el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 24, onChange: ( perPage ) => set( { perPage } ) } ),
 						el( SelectControl, { label: 'Order by', value: a.orderBy, options: orders, onChange: ( orderBy ) => set( { orderBy } ) } ),
@@ -108,8 +131,10 @@
 				),
 				el( 'div', blockProps,
 					el( 'p', { className: 'mcc-loop-note', style: { margin: '0 0 .5rem', fontSize: '12px', opacity: 0.7 } },
-						`Loop: ${ type.label }. This item repeats for each one${ postId ? `, previewing “${ text( first[ 0 ].title ) }”` : first ? ' (none published yet)' : ' (loading a preview…)' }.` ),
-					el( BlockContextProvider, { value: { postId, postType: a.postType } }, el( 'div', inner ) )
+						group
+							? `Loop: ${ group.label } rows${ a.from ? ` from ${ a.from }` : '' }${ a.where ? ` where ${ a.where }` : '' }. This item repeats for each one.`
+							: `Loop: ${ type.label }. This item repeats for each one${ postId ? `, previewing “${ text( first[ 0 ].title ) }”` : first ? ' (none published yet)' : ' (loading a preview…)' }.` ),
+					el( BlockContextProvider, { value: group ? { 'marccent/source': a.source } : { postId, postType: a.postType, 'marccent/source': '' } }, el( 'div', inner ) )
 				)
 			);
 		},
@@ -122,10 +147,13 @@
 		icon: icon( 'database' ),
 		edit( { attributes: a, setAttributes: set, context } ) {
 			const postType = context.postType;
-			const keys = keysOf( postType );
-			const value = usePreview( postType, context.postId, a.key );
+			const source = context[ 'marccent/source' ];
+			const keys = keysOf( postType, source );
+			const preview = usePreview( postType, context.postId, a.key );
+			const value = source ? null : preview; // a row has no preview: its label shows
 			const name = a.key.split( ':' )[ 0 ];
-			const isImage = name === 'image' || typeOf( postType ).fields[ name ]?.type === 'image';
+			const rowField = source ? data.groups[ source ]?.fields[ name ] : null;
+			const isImage = rowField ? rowField.type === 'image' : name === 'image' || typeOf( postType ).fields[ name ]?.type === 'image';
 			const Tag = isImage ? 'figure' : a.tag;
 			const blockProps = useBlockProps();
 			const shown = value == null || value === ''
@@ -135,7 +163,7 @@
 				el( InspectorControls, null,
 					el( PanelBody, { title: 'Field' },
 						el( SelectControl, { label: 'Value', value: keys.some( ( k ) => k.value === a.key ) ? a.key : '', options: [ ...keys, opt( 'Other (type a key)', '' ) ], onChange: ( key ) => key && set( { key } ) } ),
-						el( TextControl, { label: 'Key', help: 'title, excerpt, date, link, image:medium, terms:<taxonomy> or a field’s name.', value: a.key, onChange: ( key ) => set( { key } ) } ),
+						el( TextControl, { label: 'Key', help: 'title, excerpt, date, link, image:medium, terms:<taxonomy>, a field’s name, or a group’s field (office.phone).', value: a.key, onChange: ( key ) => set( { key } ) } ),
 						! isImage && el( SelectControl, { label: 'Format', value: a.format, options: FORMATS, onChange: ( format ) => set( { format } ) } ),
 						! isImage && el( SelectControl, { label: 'Tag', value: a.tag, options: [ 'p', 'span', 'div', 'h2', 'h3', 'h4', 'h5', 'h6' ].map( ( t ) => opt( t, t ) ), onChange: ( tag ) => set( { tag } ) } ),
 						el( TextControl, { label: 'Label before it', help: 'e.g. “Price:”', value: a.label, onChange: ( label ) => set( { label } ) } ),
@@ -179,15 +207,60 @@
 		);
 	};
 
-	const FieldsPanel = () => {
-		const postType = useSelect( ( select ) => select( 'core/editor' )?.getCurrentPostType(), [] );
-		const fields = Object.entries( typeOf( postType ).fields );
-		const [ meta, setMeta ] = useEntityProp( 'postType', postType, 'meta' );
-		if ( ! fields.length || ! wp.editor?.PluginDocumentSettingPanel ) return null;
-		return el( wp.editor.PluginDocumentSettingPanel, { name: 'marccent-content-fields', title: 'Fields' },
-			fields.map( ( [ name, f ] ) => el( FieldControl, { key: name, name, f, value: meta?.[ name ], onChange: ( v ) => setMeta( { ...meta, [ name ]: v } ) } ) )
+	// A row's title in the list: its first text value, else its number.
+	const rowTitle = ( g, row, i ) => {
+		const first = Object.entries( g.fields ).find( ( [ n, f ] ) => [ 'string', 'text', 'select', 'email' ].includes( f.type ) && row?.[ n ] );
+		return `${ i + 1 }. ${ first ? String( row[ first[ 0 ] ] ).slice( 0, 40 ) : g.label }`;
+	};
+
+	// A group's value: its fields (an object), or its rows (a list) to add, reorder and remove.
+	const GroupControl = ( { g, value, onChange } ) => {
+		const fieldsOf = ( row, change ) => Object.entries( g.fields ).map( ( [ name, f ] ) =>
+			el( FieldControl, { key: name, name, f, value: row?.[ name ], onChange: ( v ) => change( { ...( row || {} ), [ name ]: v } ) } ) );
+		if ( ! g.repeat ) {
+			return el( Fragment, null, fieldsOf( value && ! Array.isArray( value ) ? value : {}, onChange ) );
+		}
+		const rows = Array.isArray( value ) ? value : [];
+		const put = ( next ) => onChange( next );
+		const move = ( i, by ) => {
+			const next = rows.slice();
+			const [ row ] = next.splice( i, 1 );
+			next.splice( i + by, 0, row );
+			put( next );
+		};
+		return el( Fragment, null,
+			rows.map( ( row, i ) => el( PanelBody, { key: i, title: rowTitle( g, row, i ), initialOpen: false },
+				fieldsOf( row, ( r ) => put( rows.map( ( x, j ) => ( j === i ? r : x ) ) ) ),
+				el( 'div', { style: { display: 'flex', gap: '8px' } },
+					el( Button, { variant: 'secondary', size: 'small', disabled: i === 0, onClick: () => move( i, -1 ) }, 'Up' ),
+					el( Button, { variant: 'secondary', size: 'small', disabled: i === rows.length - 1, onClick: () => move( i, 1 ) }, 'Down' ),
+					el( Button, { variant: 'link', isDestructive: true, onClick: () => put( rows.filter( ( x, j ) => j !== i ) ) }, 'Remove' )
+				)
+			) ),
+			el( Button, { variant: 'secondary', onClick: () => put( [ ...rows, {} ] ), style: { marginTop: '8px' } }, `Add ${ g.label.replace( /s$/, '' ).toLowerCase() }` )
 		);
 	};
+
+	// The groups on a post: on its type, or on it by slug ("page:gallery").
+	const groupsOn = ( postType, slug ) => Object.entries( data.groups ).filter( ( [ , g ] ) =>
+		g.on.some( ( on ) => on === postType || on === `${ postType }:${ slug }` ) );
+
+	// A panel per group: a repeating group's rows are one value (under its name), the others' fields one value each.
+	const FieldsPanel = () => {
+		const { postType, slug } = useSelect( ( select ) => ( {
+			postType: select( 'core/editor' )?.getCurrentPostType(),
+			slug: select( 'core/editor' )?.getEditedPostAttribute( 'slug' ),
+		} ), [] );
+		const groups = groupsOn( postType, slug );
+		const [ meta, setMeta ] = useEntityProp( 'postType', postType, 'meta' );
+		if ( ! groups.length || ! wp.editor?.PluginDocumentSettingPanel ) return null;
+		return el( Fragment, null, groups.map( ( [ name, g ] ) => el( wp.editor.PluginDocumentSettingPanel, { key: name, name: `marccent-content-group-${ name }`, title: g.label },
+			g.repeat
+				? el( GroupControl, { g, value: meta?.[ name ], onChange: ( v ) => setMeta( { ...meta, [ name ]: v } ) } )
+				: el( GroupControl, { g, value: Object.fromEntries( Object.keys( g.fields ).map( ( f ) => [ f, meta?.[ f ] ] ) ), onChange: ( v ) => setMeta( { ...meta, ...v } ) } )
+		) ) );
+	};
+	window.marccentContentUI = { FieldControl, GroupControl, opt };
 	wp.plugins.registerPlugin( 'marccent-content-fields', { render: FieldsPanel } );
 
 	/* The binding source */
@@ -222,4 +295,5 @@
 			},
 		} );
 	}
+
 } )( window.wp );

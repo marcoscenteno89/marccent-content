@@ -9,7 +9,8 @@
  *   This is what reaches the Marccent blocks, which save their markup as it is (a card's heading "{{ title }}", a
  *   button's link "{{ link }}"): "{{ price | currency }}", "{{ image:medium }}", "{{ terms:project_service }}".
  *
- * The post is the loop's current one (the Loop block), else the page's own. Keys and formats: inc/values.php.
+ * The post is the loop's current one (the Loop block), else the page's own; in a Loop of a group's rows, the row's
+ * fields come first. Keys and formats: inc/values.php.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -21,7 +22,7 @@ add_action( 'init', function () {
 		'get_value_callback' => function ( array $args, WP_Block $block, string $attribute ) {
 			$post_id = (int) ( $block->context['postId'] ?? get_the_ID() );
 			[ $key, $format ] = mcc_parse_key( (string) ( $args['key'] ?? '' ) );
-			if ( ! $post_id || '' === $key ) {
+			if ( ( ! $post_id && ! mcc_row() && ! str_contains( $key, '.' ) ) || '' === $key ) {
 				return null;
 			}
 			$value = mcc_value( $post_id, $key, $format );
@@ -49,7 +50,7 @@ function mcc_context_post( $instance ): int {
  * A token is strictly a key and an optional format; anything else between braces is left as it was.
  */
 function mcc_token( string $inner ): ?array {
-	return preg_match( '/^\s*([a-z0-9_:\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
+	return preg_match( '/^\s*([a-z0-9_:.\-]+(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
 }
 
 add_filter( 'render_block', function ( $html, $block, $instance = null ) {
@@ -57,9 +58,8 @@ add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 		return $html;
 	}
 	$post_id = mcc_context_post( $instance );
-	if ( ! $post_id ) {
-		return $html;
-	}
+	// Without a post or a row, only a group's values (the site's: "office.phone") can be filled; other tokens stay.
+	$known = fn( $token ) => $token && ( $post_id || mcc_row() || str_contains( $token[0], '.' ) );
 
 	$uri  = array_merge( wp_kses_uri_attributes(), array( 'srcset' ) );
 	$tags = new WP_HTML_Tag_Processor( $html );
@@ -70,17 +70,17 @@ add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 				continue;
 			}
 			$value = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => '{{' . rawurldecode( $m[1] ) . '}}', $value );
-			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id ) {
+			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known ) {
 				$token = mcc_token( $m[1] );
-				return $token ? esc_url_raw( mcc_value( $post_id, ...$token ) ) : $m[0];
+				return $known( $token ) ? esc_url_raw( mcc_value( $post_id, ...$token ) ) : $m[0];
 			}, $value );
 			$tags->set_attribute( $name, $value );
 		}
 	}
 	$html = $tags->get_updated_html();
 
-	return preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id ) {
+	return preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known ) {
 		$token = mcc_token( $m[1] );
-		return $token ? esc_html( mcc_value( $post_id, ...$token ) ) : $m[0];
+		return $known( $token ) ? esc_html( mcc_value( $post_id, ...$token ) ) : $m[0];
 	}, $html );
 }, 20, 3 );

@@ -11,7 +11,7 @@ add_action( 'init', function () {
 	wp_register_script(
 		'marccent-content-editor',
 		plugins_url( 'assets/editor.js', MCC_FILE ),
-		array( 'wp-blocks', 'wp-block-editor', 'wp-components', 'wp-core-data', 'wp-data', 'wp-editor', 'wp-element', 'wp-i18n', 'wp-plugins' ),
+		array( 'wp-api-fetch', 'wp-blocks', 'wp-block-editor', 'wp-components', 'wp-core-data', 'wp-data', 'wp-editor', 'wp-element', 'wp-i18n', 'wp-plugins' ),
 		filemtime( MCC_DIR . '/assets/editor.js' ),
 		true
 	);
@@ -23,7 +23,7 @@ add_action( 'init', function () {
 // The fields panel is part of the same script, so it loads in every post editor, not only with a block.
 add_action( 'enqueue_block_editor_assets', fn() => wp_enqueue_script( 'marccent-content-editor' ) );
 
-// Every public type with its taxonomies and fields (post and page too), for the editor.
+// Every public type with its taxonomies and fields (post and page too), and the field groups, for the editor.
 function mcc_editor_data(): array {
 	$types = array();
 	foreach ( get_post_types( array( 'show_in_rest' => true, 'public' => true ), 'objects' ) as $type ) {
@@ -39,7 +39,7 @@ function mcc_editor_data(): array {
 			'fields'     => (object) mcc_fields( $type->name ),
 		);
 	}
-	return array( 'types' => $types, 'currency' => mcc_spec()['currency'] );
+	return array( 'types' => $types, 'groups' => (object) mcc_groups(), 'currency' => mcc_spec()['currency'] );
 }
 
 /**
@@ -81,4 +81,38 @@ function mcc_loop_query( array $a ): WP_Query {
 		$args['tax_query'] = array( array( 'taxonomy' => $a['taxonomy'], 'field' => 'slug', 'terms' => $terms ) );
 	}
 	return new WP_Query( apply_filters( 'marccent_content_loop_query', $args, $a ) );
+}
+
+/**
+ * The Loop's rows when its source is a repeating group: the group's rows from the page being viewed, a page (its path,
+ * "gallery") or the site ("options"), in their saved order, those that match where, then offset and how many.
+ * Where: "service=flatwork" (equal), "featured~home" (in a comma-separated list), several joined by &.
+ */
+function mcc_loop_rows( array $a ): array {
+	$g = mcc_groups()[ $a['source'] ] ?? null;
+	if ( ! $g || ! $g['repeat'] ) {
+		return array();
+	}
+	$from = trim( (string) $a['from'], '/ ' );
+	if ( 'options' === $from ) {
+		$post_id = 0;
+	} elseif ( '' === $from ) {
+		$post_id = is_singular() ? get_queried_object_id() : 0;
+	} else {
+		$page    = get_page_by_path( $from, OBJECT, mcc_group_types( $g ) ?: array( 'page' ) );
+		$post_id = $page && 'publish' === $page->post_status ? $page->ID : -1; // no such page: no rows, not the site's
+	}
+	$rows = $post_id < 0 ? array() : mcc_group_value( $a['source'], $post_id );
+
+	foreach ( array_filter( array_map( 'trim', explode( '&', (string) $a['where'] ) ) ) as $test ) {
+		if ( ! preg_match( '/^([a-z0-9_\-]+)\s*(=|~)\s*(.*)$/i', $test, $m ) ) {
+			continue;
+		}
+		[ , $name, $op, $want ] = $m;
+		$rows = array_filter( $rows, function ( $row ) use ( $name, $op, $want ) {
+			$have = (string) ( $row[ $name ] ?? '' );
+			return '=' === $op ? $have === trim( $want ) : in_array( trim( $want ), array_map( 'trim', explode( ',', $have ) ), true );
+		} );
+	}
+	return array_slice( array_values( $rows ), max( 0, (int) $a['offset'] ), max( 1, (int) $a['perPage'] ) );
 }
