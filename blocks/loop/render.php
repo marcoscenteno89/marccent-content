@@ -11,17 +11,30 @@
  * are read from, is the block's context: inside another Loop, that Loop's item; else the page's own. So Loops nest,
  * each level related to the one around it (an account's work orders' products).
  *
+ * With paging (paginate), its pages' links under it; with filters (a field's name each, or terms:<taxonomy>) or a
+ * search box, a form above it that visitors narrow it with. Both are in the address (mcc_loop_visitor), so a filtered
+ * page can be shared and works without JavaScript.
+ *
  * @var array    $attributes
  * @var WP_Block $block
  */
 
 $current = (int) ( $block->context['postId'] ?? 0 ) ?: ( is_singular() ? get_queried_object_id() : 0 );
-$rows    = '' !== $attributes['source'] ? mcc_loop_rows( $attributes, $current ) : null;
-$query   = null === $rows ? mcc_loop_query( $attributes, $current ) : null;
-$grid  = trim( sprintf( 'grid cols-%d %s', max( 1, (int) $attributes['cols'] ), $attributes['gap'] ) );
+$n       = $GLOBALS['mcc_loop_n'] = ( $GLOBALS['mcc_loop_n'] ?? 0 ) + 1; // this Loop's number on the page
+$visitor = mcc_loop_visitor( $attributes, $n );
+$total   = 0;
+$rows    = '' !== $attributes['source'] ? mcc_loop_rows( $attributes, $current, $visitor, $total ) : null;
+$query   = null === $rows ? mcc_loop_query( $attributes, $current, $visitor ) : null;
+$grid    = trim( sprintf( 'grid cols-%d %s', max( 1, (int) $attributes['cols'] ), $attributes['gap'] ) );
+$per     = max( 1, (int) $attributes['perPage'] );
+$pages   = $visitor['paged'] ? (int) ceil( ( null === $rows ? max( 0, $query->found_posts - (int) $attributes['offset'] ) : $total ) / $per ) : 1;
+$filters = mcc_loop_filters_html( $attributes, $n, $visitor );
+$pager   = mcc_loop_pager_html( $n, min( $visitor['page'], max( 1, $pages ) ), $pages );
+// The filters and pages around the grid, in a box the links come back to (#mcc-loop-2).
+$wrap = fn( $html ) => $filters || $visitor['paged'] ? sprintf( '<div id="mcc-loop-%d" class="mcc-loop">%s%s%s</div>', $n, $filters, $html, $pager ) : $html;
 
 if ( null === $rows ? ! $query->have_posts() : ! $rows ) {
-	printf( '<p %s>%s</p>', get_block_wrapper_attributes( array( 'class' => 'loop-empty' ) ), esc_html( $attributes['empty'] ) );
+	echo $wrap( sprintf( '<p %s>%s</p>', get_block_wrapper_attributes( array( 'class' => 'loop-empty' ) ), esc_html( $attributes['empty'] ) ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped as built
 	return;
 }
 
@@ -44,7 +57,7 @@ if ( null !== $rows ) {
 		array_pop( $GLOBALS['mcc_rows'] );
 		$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 	}
-	printf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
+	echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
 	return;
 }
 
@@ -66,5 +79,4 @@ if ( $post ) {
 } else {
 	wp_reset_postdata();
 }
-?>
-<div <?php echo get_block_wrapper_attributes( array( 'class' => $grid ) ); ?>><?php echo $items; // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks ?></div>
+echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks

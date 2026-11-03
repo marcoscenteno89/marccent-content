@@ -25,9 +25,17 @@
  * that exist to be shown in loops rather than read on their own.
  *
  * Field groups, as ACF's: a named set of fields put "on" post types ("page"), on some pages only ("page:contact", by
- * slug) or on the site ("options": the Site content screen). Field types: string, text (several lines), number, url,
- * email, date, boolean, image (an attachment), select (with "options": [ "a", "b" ]), relation (another post: "to" its
- * post type; "multiple": true for several). A field may have a help line, a prefix and a suffix (shown around its value).
+ * slug), on those with a template ("page@landing"), on a taxonomy's terms ("term:category"), on users ("user") or on
+ * the site ("options": the Site content screen). Field types: string, text (several lines), html (rich text: links,
+ * bold, lists), number, url, email, date, boolean, color, image (an attachment), file (any attachment: a PDF…),
+ * gallery (several images, in an order), location (an address with its latitude and longitude), select (with
+ * "options": [ "a", "b" ]), relation (another post: "to" its post type; "multiple": true for several).
+ *
+ * A field may have a help line, a prefix and a suffix (shown around its value), and:
+ * - "required": true: a post isn't published without it (drafts may leave it empty), nor the site content saved;
+ * - "unique": true: no two posts of the type have the same value (a SKU, an email);
+ * - "show_if": "kind=office": shown beside the post only while the post's other fields pass that where (the Loop's
+ *   syntax, mcc_where); hidden, it isn't required either.
  *
  * A relation is a foreign key, as Django's: { "account": { "type": "relation", "to": "account" } } on contacts is a
  * contact's account; with "multiple": true, a many-to-many ("products" on a work order). On posts each related post's
@@ -46,7 +54,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const MCC_FIELD_TYPES = array( 'string', 'text', 'number', 'url', 'email', 'date', 'boolean', 'image', 'select', 'relation' );
+const MCC_FIELD_TYPES = array( 'string', 'text', 'html', 'number', 'url', 'email', 'date', 'boolean', 'color', 'image', 'file', 'gallery', 'location', 'select', 'relation' );
 
 // A post's own values (inc/values.php): a field on posts can't have one of these names.
 const MCC_RESERVED = array( 'title', 'excerpt', 'content', 'date', 'modified', 'link', 'id', 'author', 'type', 'image', 'image_alt', 'terms', 'count', 'sum', 'avg', 'min', 'max' );
@@ -107,9 +115,20 @@ function mcc_is_many( array $f ): bool {
 	return 'relation' === $f['type'] && $f['multiple'];
 }
 
-// A field's meta type: an image or a related post is its id.
+// A field's meta type: an image, a file or a related post is its id; a gallery a list of ids; a location an object.
 function mcc_meta_type( array $f ): string {
-	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'relation' => 'integer' )[ $f['type'] ] ?? 'string';
+	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'file' => 'integer', 'relation' => 'integer', 'gallery' => 'array', 'location' => 'object' )[ $f['type'] ] ?? 'string';
+}
+
+// A field's REST schema (one meta value, or one value in a row).
+function mcc_field_schema( array $f ): array {
+	if ( mcc_is_many( $f ) || 'gallery' === $f['type'] ) {
+		return array( 'type' => 'array', 'items' => array( 'type' => 'integer' ) );
+	}
+	if ( 'location' === $f['type'] ) {
+		return array( 'type' => 'object', 'properties' => array( 'address' => array( 'type' => 'string' ), 'lat' => array( 'type' => array( 'number', 'string' ) ), 'lng' => array( 'type' => array( 'number', 'string' ) ) ), 'additionalProperties' => false );
+	}
+	return array( 'type' => mcc_meta_type( $f ) );
 }
 
 // A field's saved value on a post: a list of ids for several related posts.
@@ -150,9 +169,66 @@ function mcc_groups(): array {
 	return $GLOBALS['mcc_cache']['groups'];
 }
 
-// The post types a group is on ("page:contact" is on pages).
+// The post types a group is on ("page:contact" and "page@landing" are on pages; not "term:…", "user" or "options").
 function mcc_group_types( array $g ): array {
-	return array_values( array_unique( array_diff( array_map( fn( $on ) => explode( ':', $on, 2 )[0], $g['on'] ), array( 'options' ) ) ) );
+	$types = array();
+	foreach ( $g['on'] as $on ) {
+		if ( 'options' !== $on && 'user' !== $on && ! str_starts_with( $on, 'term:' ) ) {
+			$types[] = preg_split( '/[:@]/', $on, 2 )[0];
+		}
+	}
+	return array_values( array_unique( $types ) );
+}
+
+// The taxonomies a group is on, for their terms ("term:category").
+function mcc_group_taxonomies( array $g ): array {
+	return array_values( array_map( fn( $on ) => substr( $on, 5 ), array_filter( $g['on'], fn( $on ) => str_starts_with( $on, 'term:' ) ) ) );
+}
+
+// Whether a field is shown with these values (its show_if passes; a field without one always is).
+function mcc_field_shown( array $f, array $values ): bool {
+	$if = trim( (string) ( $f['show_if'] ?? '' ) );
+	return '' === $if || mcc_where_row( array_map( fn( $v ) => is_bool( $v ) ? ( $v ? '1' : '' ) : $v, $values ), mcc_where( $if ) );
+}
+
+// Whether a value counts as empty for a required field.
+function mcc_is_empty( $value, array $f ): bool {
+	if ( 'location' === $f['type'] ) {
+		return '' === trim( (string) ( ( (array) $value )['address'] ?? '' ) ) && '' === (string) ( ( (array) $value )['lat'] ?? '' );
+	}
+	if ( 'boolean' === $f['type'] ) {
+		return ! $value;
+	}
+	return is_array( $value ) ? ! array_filter( $value, fn( $v ) => '' !== $v && 0 !== $v && null !== $v ) : ( '' === trim( (string) $value ) || ( in_array( $f['type'], array( 'image', 'file', 'relation' ), true ) && ! (int) $value ) );
+}
+
+/**
+ * What's missing or taken in a group's values: the required fields left empty (unless show_if hides them), and for a
+ * post's fields the unique ones another post of its type already has: [ 'required' => messages, 'unique' => messages ].
+ */
+function mcc_check_values( array $g, $values, int $post_id = 0, string $post_type = '' ): array {
+	$errors = array( 'required' => array(), 'unique' => array() );
+	$rows   = $g['repeat'] ? (array) $values : array( (array) $values );
+	foreach ( $rows as $i => $row ) {
+		$row = (array) $row;
+		foreach ( $g['fields'] as $name => $f ) {
+			if ( ! empty( $f['required'] ) && mcc_field_shown( $f, $row ) && mcc_is_empty( $row[ $name ] ?? '', $f ) ) {
+				$errors['required'][] = $g['repeat']
+					/* translators: 1: a field's label, 2: a group's label, 3: a row's number */
+					? sprintf( __( '%1$s is required (%2$s, row %3$d).', 'marccent-content' ), $f['label'], $g['label'], $i + 1 )
+					/* translators: %s: a field's label */
+					: sprintf( __( '%s is required.', 'marccent-content' ), $f['label'] );
+			}
+			if ( ! empty( $f['unique'] ) && ! $g['repeat'] && $post_type && ! mcc_is_empty( $row[ $name ] ?? '', $f ) && is_scalar( $row[ $name ] ) ) {
+				$taken = get_posts( array( 'post_type' => $post_type, 'post_status' => array( 'publish', 'draft', 'pending', 'future', 'private' ), 'numberposts' => 1, 'fields' => 'ids', 'post__not_in' => array( $post_id ?: 0 ), 'meta_query' => array( array( 'key' => $name, 'value' => (string) $row[ $name ] ) ) ) );
+				if ( $taken ) {
+					/* translators: 1: a field's label, 2: the value, 3: another post's title */
+					$errors['unique'][] = sprintf( __( '%1$s “%2$s” is already used by “%3$s”.', 'marccent-content' ), $f['label'], $row[ $name ], get_the_title( $taken[0] ) );
+				}
+			}
+		}
+	}
+	return $errors;
 }
 
 // Every post type's fields, from the groups on it that don't repeat (each field its own post meta).
@@ -181,7 +257,7 @@ function mcc_post_field( int $post_id, string $name ): ?array {
 function mcc_group_schema( array $g ): array {
 	$props = array();
 	foreach ( $g['fields'] as $name => $f ) {
-		$props[ $name ] = mcc_is_many( $f ) ? array( 'type' => 'array', 'items' => array( 'type' => 'integer' ) ) : array( 'type' => mcc_meta_type( $f ) );
+		$props[ $name ] = mcc_field_schema( $f );
 	}
 	$row = array( 'type' => 'object', 'properties' => $props, 'additionalProperties' => false );
 	return $g['repeat'] ? array( 'type' => 'array', 'items' => $row ) : $row;
@@ -192,7 +268,7 @@ function mcc_group_sanitize( $value, array $g ): array {
 		$out = array();
 		foreach ( $g['fields'] as $name => $f ) {
 			$value        = ( (array) $r )[ $name ] ?? '';
-			$out[ $name ] = mcc_sanitize( mcc_is_many( $f ) && ! is_array( $value ) ? array( $value ) : $value, $f );
+			$out[ $name ] = mcc_sanitize( ( mcc_is_many( $f ) || 'gallery' === $f['type'] ) && ! is_array( $value ) ? array_filter( array( $value ) ) : $value, $f );
 		}
 		return $out;
 	};
@@ -218,12 +294,60 @@ function mcc_group_value( string $group, int $post_id = 0 ): array {
 				$value[ $name ] = mcc_meta( $post_id, $name, $f );
 			}
 		}
+	} elseif ( ( $object = mcc_queried_object( $g ) ) ) {
+		$value = mcc_object_group_value( $group, $object[0], $object[1] );
 	} elseif ( in_array( 'options', $g['on'], true ) ) {
 		$value = get_option( "mcc_$group", array() );
 	} else {
 		$value = array();
 	}
 	return is_array( $value ) ? $value : array();
+}
+
+// The term or user the page is about, when the group is on it: [ 'term'|'user', id ], else null.
+function mcc_queried_object( array $g ): ?array {
+	$q = get_queried_object();
+	if ( $q instanceof WP_Term && in_array( $q->taxonomy, mcc_group_taxonomies( $g ), true ) ) {
+		return array( 'term', $q->term_id );
+	}
+	if ( $q instanceof WP_User && in_array( 'user', $g['on'], true ) ) {
+		return array( 'user', $q->ID );
+	}
+	return null;
+}
+
+// A group's values on a term or a user: its rows under the group's name, or each field under its own.
+function mcc_object_group_value( string $group, string $kind, int $id ): array {
+	$g   = mcc_groups()[ $group ] ?? null;
+	$get = 'term' === $kind ? 'get_term_meta' : 'get_user_meta';
+	if ( ! $g || ! $id ) {
+		return array();
+	}
+	if ( $g['repeat'] ) {
+		$value = $get( $id, $group, true );
+		return is_array( $value ) ? $value : array();
+	}
+	$value = array();
+	foreach ( $g['fields'] as $name => $f ) {
+		$value[ $name ] = $get( $id, $name, true );
+	}
+	return $value;
+}
+
+function mcc_save_object_group( string $group, string $kind, int $id, $values ): void {
+	$g   = mcc_groups()[ $group ] ?? null;
+	$put = 'term' === $kind ? 'update_term_meta' : 'update_user_meta';
+	if ( ! $g || ! $id ) {
+		return;
+	}
+	$clean = mcc_group_sanitize( $values, $g );
+	if ( $g['repeat'] ) {
+		$put( $id, $group, $clean );
+		return;
+	}
+	foreach ( $clean as $name => $value ) {
+		$put( $id, $name, $value );
+	}
 }
 
 /**
@@ -250,6 +374,7 @@ function mcc_save_spec( array $spec ) {
 	}
 
 	$known = array_merge( array_keys( $spec['types'] ), array_values( array_diff( get_post_types( array( 'public' => true ) ), array( 'attachment' ) ) ) );
+	$taxes = array_merge( ...array_map( fn( $t ) => array_keys( (array) ( $t['taxonomies'] ?? array() ) ), array_values( $spec['types'] ) ?: array( array() ) ) );
 	$keys  = array(); // per post type: meta key => the group that uses it
 	foreach ( $spec['groups'] as $group => $g ) {
 		$g     = (array) $g;
@@ -263,8 +388,17 @@ function mcc_save_spec( array $spec ) {
 			$errors[] = sprintf( __( '%s: choose where it goes (a post type, some pages, or the site).', 'marccent-content' ), $label );
 		}
 		foreach ( (array) ( $g['on'] ?? array() ) as $on ) {
-			$type = explode( ':', (string) $on, 2 )[0];
-			if ( 'options' !== $on && ! in_array( $type, $known, true ) ) {
+			$on = (string) $on;
+			if ( str_starts_with( $on, 'term:' ) ) {
+				$tax = substr( $on, 5 );
+				if ( ! taxonomy_exists( $tax ) && ! in_array( $tax, $taxes, true ) ) {
+					/* translators: 1: a field group's label, 2: a taxonomy's name */
+					$errors[] = sprintf( __( '%1$s: there is no taxonomy “%2$s”.', 'marccent-content' ), $label, $tax );
+				}
+				continue;
+			}
+			$type = preg_split( '/[:@]/', $on, 2 )[0];
+			if ( 'options' !== $on && 'user' !== $on && ! in_array( $type, $known, true ) ) {
 				/* translators: 1: a field group's label, 2: a post type's name */
 				$errors[] = sprintf( __( '%1$s: there is no post type “%2$s”.', 'marccent-content' ), $label, $type );
 			}
@@ -351,7 +485,7 @@ function mcc_register_types(): void {
 			register_post_meta( $post_type, $name, array(
 				'type'              => mcc_meta_type( $f ),
 				'single'            => ! mcc_is_many( $f ), // several related posts: a meta row each
-				'show_in_rest'      => true,
+				'show_in_rest'      => in_array( $f['type'], array( 'gallery', 'location' ), true ) ? array( 'schema' => mcc_field_schema( $f ) ) : true,
 				'label'             => $f['label'],
 				'sanitize_callback' => fn( $value ) => mcc_sanitize( $value, $f ),
 				'auth_callback'     => fn( $allowed, $key, $post_id ) => current_user_can( 'edit_post', $post_id ),
@@ -422,7 +556,18 @@ function mcc_sanitize( $value, array $f ) {
 		case 'boolean':
 			return (bool) $value;
 		case 'image':
+		case 'file':
 			return absint( $value );
+		case 'gallery':
+			return array_values( array_filter( array_map( 'absint', (array) $value ) ) );
+		case 'location':
+			$v   = (array) $value;
+			$num = fn( $n, $max ) => is_numeric( $n ) && abs( (float) $n ) <= $max ? round( (float) $n, 7 ) : '';
+			return array( 'address' => sanitize_text_field( (string) ( $v['address'] ?? '' ) ), 'lat' => $num( $v['lat'] ?? '', 90 ), 'lng' => $num( $v['lng'] ?? '', 180 ) );
+		case 'color':
+			return (string) sanitize_hex_color( (string) $value );
+		case 'html':
+			return wp_kses_post( (string) $value );
 		case 'relation':
 			// Several in a row's value are a list; on a post, each meta row is one id.
 			if ( is_array( $value ) ) {
@@ -440,4 +585,54 @@ function mcc_sanitize( $value, array $f ) {
 		default:
 			return sanitize_text_field( (string) $value );
 	}
+}
+
+/*
+ * Required and unique fields, checked when the editor saves a post (its REST request): a post isn't published, nor a
+ * published one updated, with a required field empty; a draft may be. A unique value another post of the type has is
+ * refused whatever the status. The editor shows the message and keeps the post as it was.
+ */
+add_action( 'rest_api_init', function () {
+	foreach ( get_post_types( array( 'show_in_rest' => true ) ) as $post_type ) {
+		$groups = array_filter( mcc_groups(), fn( $g ) => in_array( $post_type, mcc_group_types( $g ), true ) && array_filter( $g['fields'], fn( $f ) => ! empty( $f['required'] ) || ! empty( $f['unique'] ) ) );
+		if ( ! $groups ) {
+			continue;
+		}
+		add_filter( "rest_pre_insert_$post_type", function ( $prepared, WP_REST_Request $request ) use ( $groups, $post_type ) {
+			$id     = (int) ( $prepared->ID ?? 0 );
+			$status = $prepared->post_status ?? ( $id ? get_post_status( $id ) : 'draft' );
+			$slug   = $prepared->post_name ?? ( $id ? get_post_field( 'post_name', $id ) : '' );
+			$tpl    = (string) ( $request['template'] ?? ( $id ? get_page_template_slug( $id ) : '' ) );
+			$meta   = (array) ( $request['meta'] ?? array() );
+			$errors = array();
+			foreach ( $groups as $name => $g ) {
+				if ( ! mcc_group_on_post( $g, $post_type, (string) $slug, $tpl ) ) {
+					continue;
+				}
+				// What it will be: what's sent, else what's saved.
+				if ( $g['repeat'] ) {
+					$values = array_key_exists( $name, $meta ) ? $meta[ $name ] : ( $id ? get_post_meta( $id, $name, true ) : array() );
+				} else {
+					$values = array();
+					foreach ( $g['fields'] as $field => $f ) {
+						$values[ $field ] = array_key_exists( $field, $meta ) ? $meta[ $field ] : ( $id ? mcc_meta( $id, $field, $f ) : '' );
+					}
+				}
+				$found  = mcc_check_values( $g, $values ?: array(), $id, $post_type );
+				$public = in_array( $status, array( 'publish', 'future', 'private' ), true ); // a draft may be incomplete
+				$errors = array_merge( $errors, $public ? $found['required'] : array(), $found['unique'] );
+			}
+			return $errors ? new WP_Error( 'mcc_invalid', implode( ' ', $errors ), array( 'status' => 400, 'errors' => $errors ) ) : $prepared;
+		}, 10, 2 );
+	}
+} );
+
+// Whether a group is on a post: its type, its slug ("page:contact") or its template ("page@landing").
+function mcc_group_on_post( array $g, string $post_type, string $slug, string $template ): bool {
+	foreach ( $g['on'] as $on ) {
+		if ( $on === $post_type || $on === "$post_type:$slug" || ( '' !== $template && $on === "$post_type@$template" ) ) {
+			return true;
+		}
+	}
+	return false;
 }

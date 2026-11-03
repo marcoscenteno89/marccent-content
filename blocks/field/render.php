@@ -30,6 +30,29 @@ if ( 'image' === ( $field['type'] ?? ( 'image' === $name ? 'image' : '' ) ) ) {
 	$html = implode( ', ', array_map( fn( $id ) => sprintf( '<a href="%s">%s</a>', esc_url( get_permalink( $id ) ), esc_html( wp_strip_all_tags( get_the_title( $id ) ) ) ), $related ) );
 	$link = '';
 	$tag  = in_array( $attributes['tag'], array( 'p', 'span', 'div', 'h2', 'h3', 'h4', 'h5', 'h6' ), true ) ? $attributes['tag'] : 'p';
+} elseif ( 'gallery' === ( $field['type'] ?? '' ) && ! str_contains( $key, ':count' ) ) {
+	// Its images, in a grid of their own (the theme's), each with its alt text.
+	$row  = mcc_row();
+	$ids  = $row && isset( $row['fields'][ $name ] ) ? (array) ( $row['values'][ $name ] ?? array() ) : (array) get_post_meta( $post_id, $name, true );
+	$size = explode( ':', $key, 2 )[1] ?? 'medium_large';
+	$html = implode( '', array_map( fn( $id ) => wp_get_attachment_image( (int) $id, $size, false, array( 'class' => 'w-100 round', 'loading' => 'lazy', 'style' => 'display: block; height: auto; aspect-ratio: 4 / 3; object-fit: cover' ) ), array_filter( array_map( 'absint', $ids ) ) ) );
+	printf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => 'grid cols-3 gap-sm' ) ), $html ); // phpcs:ignore WordPress.Security.EscapeOutput -- WordPress's image markup
+	return;
+} elseif ( 'file' === ( $field['type'] ?? '' ) && ! str_contains( $key, ':name' ) ) {
+	$html = sprintf( '<a href="%s" download>%s</a>', esc_url( $value ), esc_html( mcc_value( $post_id, "$name:name" ) ) );
+	$link = '';
+	$tag  = in_array( $attributes['tag'], array( 'p', 'span', 'div' ), true ) ? $attributes['tag'] : 'p';
+} elseif ( 'html' === ( $field['type'] ?? '' ) ) {
+	// Rich text, as it was saved (filtered as a post's content is).
+	$row  = mcc_row();
+	$raw  = $row && isset( $row['fields'][ $name ] ) ? (string) ( $row['values'][ $name ] ?? '' ) : ( str_contains( $name, '.' ) ? '' : (string) get_post_meta( $post_id, $name, true ) );
+	$html = wp_kses_post( '' !== $raw ? $raw : esc_html( $value ) );
+	$tag  = 'div';
+} elseif ( 'location' === ( $field['type'] ?? '' ) && ! preg_match( '/:(lat|lng|map)$/', $key ) ) {
+	// The address, linked to its map.
+	$html = sprintf( '<a href="%s" target="_blank" rel="noopener">%s</a>', esc_url( mcc_value( $post_id, "$name:map" ) ), esc_html( $value ) );
+	$link = '';
+	$tag  = in_array( $attributes['tag'], array( 'p', 'span', 'div' ), true ) ? $attributes['tag'] : 'p';
 } elseif ( 'url' === ( $field['type'] ?? '' ) ) {
 	$html = sprintf( '<a href="%1$s">%1$s</a>', esc_url( $value ) );
 	$link = '';

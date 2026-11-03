@@ -25,13 +25,24 @@ function mcc_site_values(): array {
 	return array_map( fn( $name ) => mcc_group_value( $name ), array_combine( array_keys( mcc_site_groups() ), array_keys( mcc_site_groups() ) ) ?: array() );
 }
 
-// Saves the site's groups, those given; each sanitized for its fields.
-function mcc_save_site_values( array $values ): void {
+// Saves the site's groups, those given; each sanitized for its fields. A required field left empty saves nothing:
+// a list of what's missing, else true.
+function mcc_save_site_values( array $values, bool $check = true ) {
+	$errors = array();
+	foreach ( mcc_site_groups() as $name => $g ) {
+		if ( $check && array_key_exists( $name, $values ) ) {
+			$errors = array_merge( $errors, mcc_check_values( $g, mcc_group_sanitize( $values[ $name ], $g ) )['required'] );
+		}
+	}
+	if ( $errors ) {
+		return $errors;
+	}
 	foreach ( mcc_site_groups() as $name => $g ) {
 		if ( array_key_exists( $name, $values ) ) {
 			update_option( "mcc_$name", mcc_group_sanitize( $values[ $name ], $g ) );
 		}
 	}
+	return true;
 }
 
 add_action( 'init', function () {
@@ -49,7 +60,7 @@ add_action( 'rest_api_init', function () {
 		array(
 			'methods'             => 'GET',
 			'permission_callback' => fn() => current_user_can( 'manage_options' ),
-			'callback'            => fn() => array( 'spec' => mcc_spec_json(), 'postTypes' => mcc_admin_post_types() ),
+			'callback'            => fn() => array( 'spec' => mcc_spec_json(), 'postTypes' => mcc_admin_post_types(), 'taxonomies' => mcc_admin_taxonomies(), 'templates' => mcc_admin_templates() ),
 		),
 		array(
 			'methods'             => 'POST',
@@ -57,7 +68,7 @@ add_action( 'rest_api_init', function () {
 			'callback'            => function ( WP_REST_Request $request ) {
 				$spec  = $request->get_param( 'spec' );
 				$saved = is_array( $spec ) ? mcc_save_spec( $spec ) : new WP_Error( 'mcc_spec', __( 'No spec given.', 'marccent-content' ), array( 'status' => 400 ) );
-				return is_wp_error( $saved ) ? $saved : array( 'spec' => mcc_spec_json(), 'postTypes' => mcc_admin_post_types() );
+				return is_wp_error( $saved ) ? $saved : array( 'spec' => mcc_spec_json(), 'postTypes' => mcc_admin_post_types(), 'taxonomies' => mcc_admin_taxonomies(), 'templates' => mcc_admin_templates() );
 			},
 		),
 	) );
@@ -71,7 +82,10 @@ add_action( 'rest_api_init', function () {
 			'methods'             => 'POST',
 			'permission_callback' => fn() => current_user_can( mcc_site_capability() ),
 			'callback'            => function ( WP_REST_Request $request ) {
-				mcc_save_site_values( (array) $request->get_param( 'values' ) );
+				$saved = mcc_save_site_values( (array) $request->get_param( 'values' ) );
+				if ( true !== $saved ) {
+					return new WP_Error( 'mcc_invalid', implode( ' ', $saved ), array( 'status' => 400, 'errors' => $saved ) );
+				}
 				return array( 'groups' => (object) mcc_site_groups(), 'values' => (object) mcc_site_values() );
 			},
 		),
@@ -99,6 +113,36 @@ function mcc_admin_post_types(): array {
 		$types[ $name ] = $types[ $name ] ?? ( $t['label'] ?? $name );
 	}
 	return $types;
+}
+
+// The taxonomies a group can go on (their terms): the public ones, and the spec's not yet registered.
+function mcc_admin_taxonomies(): array {
+	$taxes = array();
+	foreach ( get_taxonomies( array( 'public' => true, 'show_ui' => true ), 'objects' ) as $tax ) {
+		if ( 'post_format' !== $tax->name ) {
+			$taxes[ $tax->name ] = $tax->labels->name;
+		}
+	}
+	foreach ( mcc_spec()['types'] as $t ) {
+		foreach ( (array) ( $t['taxonomies'] ?? array() ) as $name => $x ) {
+			$taxes[ $name ] = $taxes[ $name ] ?? ( $x['label'] ?? $name );
+		}
+	}
+	return $taxes;
+}
+
+// The templates a page or post can have (the theme's), by slug: those a group can be limited to ("page@landing").
+function mcc_admin_templates(): array {
+	$out = array();
+	foreach ( function_exists( 'get_block_templates' ) ? get_block_templates( array(), 'wp_template' ) : array() as $t ) {
+		if ( ! empty( $t->is_custom ) || ! empty( $t->post_types ) ) {
+			$out[ $t->slug ] = $t->title ?: $t->slug;
+		}
+	}
+	foreach ( wp_get_theme()->get_page_templates() as $file => $title ) {
+		$out[ $file ] = $out[ $file ] ?? $title;
+	}
+	return $out;
 }
 
 /* The screens */
@@ -202,8 +246,84 @@ add_filter( 'marccent_export_parts', function ( $parts ) {
 		'label'  => __( 'Site content (the groups on the site)', 'marccent-content' ),
 		'export' => 'mcc_site_values',
 		'import' => function ( array $data ) {
-			mcc_save_site_values( $data );
+			mcc_save_site_values( $data, false ); // as it was exported, even with a field required since
 		},
 	);
 	return $parts;
+} );
+
+/*
+ * Field groups on terms ("term:<taxonomy>") and users ("user"): their fields on the term's and the user's screens,
+ * drawn by the same controls as beside a post (assets/admin.js, data-mcc-object) into a hidden field, and saved with
+ * the term or the user: a repeating group's rows under its name, the others' fields each under its own (term or user
+ * meta). On the term's archive or the author's page, {{ group.field }} and a Loop of the group's rows read them.
+ */
+function mcc_object_groups( string $kind, string $taxonomy = '' ): array {
+	return array_filter( mcc_groups(), fn( $g ) => 'user' === $kind ? in_array( 'user', $g['on'], true ) : in_array( $taxonomy, mcc_group_taxonomies( $g ), true ) );
+}
+
+function mcc_object_fields( array $groups, string $kind, int $id, bool $table ): void {
+	if ( ! $groups ) {
+		return;
+	}
+	wp_enqueue_media();
+	wp_enqueue_style( 'wp-components' );
+	wp_enqueue_script( 'marccent-content-admin' );
+	$values = array();
+	foreach ( array_keys( $groups ) as $name ) {
+		$values[ $name ] = $id ? mcc_object_group_value( $name, $kind, $id ) : ( $groups[ $name ]['repeat'] ? array() : (object) array() );
+	}
+	wp_nonce_field( 'mcc_object', '_mcc_object_nonce' );
+	$box = sprintf(
+		'<input type="hidden" name="mcc_object" value="%1$s"><div data-mcc-object data-groups="%2$s" data-values="%1$s"></div>',
+		esc_attr( wp_json_encode( (object) $values ) ),
+		esc_attr( wp_json_encode( (object) $groups ) )
+	);
+	if ( $table ) {
+		printf( '<tr class="form-field"><th scope="row">%s</th><td style="max-width:40rem">%s</td></tr>', esc_html__( 'Fields', 'marccent-content' ), $box ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped above
+	} else {
+		echo '<div class="form-field" style="max-width:40rem">' . $box . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- escaped above
+	}
+}
+
+function mcc_object_save( array $groups, string $kind, int $id ): void {
+	if ( ! $groups || ! isset( $_POST['mcc_object'] ) || ! wp_verify_nonce( sanitize_key( $_POST['_mcc_object_nonce'] ?? '' ), 'mcc_object' ) ) {
+		return;
+	}
+	$values = json_decode( wp_unslash( (string) $_POST['mcc_object'] ), true ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput -- each group sanitized for its fields
+	foreach ( $groups as $name => $g ) {
+		if ( is_array( $values ) && array_key_exists( $name, $values ) ) {
+			mcc_save_object_group( $name, $kind, $id, $values[ $name ] );
+		}
+	}
+}
+
+add_action( 'admin_init', function () {
+	foreach ( mcc_admin_taxonomies() as $tax => $label ) {
+		add_action( "{$tax}_add_form_fields", fn() => mcc_object_fields( mcc_object_groups( 'term', $tax ), 'term', 0, false ) );
+		add_action( "{$tax}_edit_form_fields", fn( $term ) => mcc_object_fields( mcc_object_groups( 'term', $tax ), 'term', $term->term_id, true ) );
+		$save = function ( $term_id ) use ( $tax ) {
+			if ( current_user_can( 'edit_term', $term_id ) ) {
+				mcc_object_save( mcc_object_groups( 'term', $tax ), 'term', (int) $term_id );
+			}
+		};
+		add_action( "created_$tax", $save );
+		add_action( "edited_$tax", $save );
+	}
+	$user = function ( WP_User $u ) {
+		if ( mcc_object_groups( 'user' ) ) {
+			echo '<h2>' . esc_html__( 'Fields', 'marccent-content' ) . '</h2><table class="form-table" role="presentation">';
+			mcc_object_fields( mcc_object_groups( 'user' ), 'user', $u->ID, true );
+			echo '</table>';
+		}
+	};
+	add_action( 'show_user_profile', $user );
+	add_action( 'edit_user_profile', $user );
+	$save = function ( $user_id ) {
+		if ( current_user_can( 'edit_user', $user_id ) ) {
+			mcc_object_save( mcc_object_groups( 'user' ), 'user', (int) $user_id );
+		}
+	};
+	add_action( 'personal_options_update', $save );
+	add_action( 'edit_user_profile_update', $save );
 } );

@@ -9,6 +9,8 @@
  * - Relations (a field of type relation, to a post type): picked from that type's posts beside a post; their keys
  *   ("account", "account.phone") in the Field block's list; a Loop's "Related" setting lists the posts related to the
  *   current one either way.
+ * - Show if: on every block, a where on the current post's (or row's, or the site's) values; the block shows only when
+ *   it passes (inc/blocks.php).
  * window.marccentContent: { types: [ { name, label, singular, taxonomies: [ { name, label } ], fields: { name: field } } ],
  * groups: { name: { label, repeat, on: [ 'page', 'page:gallery', 'options' ], fields } }, currency }; a type's fields are
  * those of the groups on it that don't repeat.
@@ -17,7 +19,7 @@
 	const { createElement: el, Fragment } = wp.element;
 	const { registerBlockType, registerBlockBindingsSource } = wp.blocks;
 	const { InspectorControls, useBlockProps, useInnerBlocksProps, InnerBlocks, BlockContextProvider, MediaUpload, MediaUploadCheck } = wp.blockEditor;
-	const { PanelBody, SelectControl, RangeControl, TextControl, ToggleControl, TextareaControl, Button, ComboboxControl } = wp.components;
+	const { PanelBody, SelectControl, RangeControl, TextControl, ToggleControl, TextareaControl, Button, ComboboxControl, ColorPalette } = wp.components;
 	const { useSelect } = wp.data;
 	const { useState } = wp.element;
 	const { useEntityProp } = wp.coreData;
@@ -76,6 +78,25 @@
 		];
 	};
 	const FORMATS = [ opt( 'As is', '' ), opt( 'Currency', 'currency' ), opt( 'Number', 'number' ), opt( 'Date', 'date' ), opt( 'Upper case', 'upper' ), opt( 'First 20 words', 'words:20' ), opt( 'Without prefix / suffix', 'raw' ) ];
+
+	// A where (inc/blocks.php, mcc_where) on a set of values: the tests joined by &; = one of, != none of, ~ in a list,
+	// *= contains, < > <= >=; nothing after = or != is empty or not.
+	const passes = ( values, where ) => ( where || '' ).split( '&' ).map( ( t ) => t.trim() ).filter( Boolean ).every( ( t ) => {
+		const m = t.match( /^([a-z0-9_\-.:]+)\s*(!=|<=|>=|\*=|=|~|<|>)\s*(.*)$/i );
+		if ( ! m ) return true;
+		const [ , name, op, want ] = m;
+		const raw = values?.[ name ];
+		const have = ( Array.isArray( raw ) ? raw : [ raw === true ? '1' : raw === false || raw == null ? '' : raw ] ).map( String );
+		const wants = want.split( ',' ).map( ( w ) => w.trim() );
+		if ( op === '=' ) return have.some( ( h ) => wants.includes( h ) );
+		if ( op === '!=' ) return ! have.some( ( h ) => wants.includes( h ) );
+		if ( op === '~' ) return ( Array.isArray( raw ) ? have : String( raw ?? '' ).split( ',' ).map( ( x ) => x.trim() ) ).includes( want );
+		if ( op === '*=' ) return have.join( ' ' ).toLowerCase().includes( want.toLowerCase() );
+		const h = have[ 0 ];
+		if ( h === '' ) return false;
+		const c = ! isNaN( h ) && ! isNaN( want ) ? Number( h ) - Number( want ) : h.localeCompare( want );
+		return { '<': c < 0, '>': c > 0, '<=': c <= 0, '>=': c >= 0 }[ op ];
+	} );
 
 	const text = ( v ) => String( v && typeof v === 'object' ? v.raw ?? v.rendered ?? '' : v ?? '' ).replace( /<[^>]*>/g, '' ).trim();
 
@@ -196,6 +217,11 @@
 						el( ToggleControl, { label: 'Leave out the post being viewed', checked: a.excludeCurrent, onChange: ( excludeCurrent ) => set( { excludeCurrent } ) } ),
 						el( TextControl, { label: 'When there are none', value: a.empty, onChange: ( empty ) => set( { empty } ) } )
 					),
+					el( PanelBody, { title: 'For visitors', initialOpen: !! ( a.paginate || a.filters || a.searchBox ) },
+						el( ToggleControl, { label: 'Pages (previous / next)', help: a.paginate ? `${ a.perPage } per page.` : 'Off: only the first ones.', checked: a.paginate, onChange: ( paginate ) => set( { paginate } ) } ),
+						el( TextControl, { label: 'Filters', help: `Fields visitors can narrow it by, comma-separated: ${ ( group ? Object.keys( group.fields ) : [ ...Object.keys( type.fields ), ...type.taxonomies.map( ( x ) => `terms:${ x.name }` ) ] ).join( ', ' ) || 'none yet' }.`, value: a.filters, onChange: ( filters ) => set( { filters } ) } ),
+						el( ToggleControl, { label: 'A search box', checked: a.searchBox, onChange: ( searchBox ) => set( { searchBox } ) } )
+					),
 					el( PanelBody, { title: 'Grid' },
 						el( RangeControl, { label: 'Columns', value: a.cols, min: 1, max: 6, onChange: ( cols ) => set( { cols } ) } ),
 						el( SelectControl, { label: 'Gap', value: a.gap, options: [ opt( 'None', 'gap-0' ), opt( 'Small', 'gap-sm' ), opt( 'Normal', '' ), opt( 'Large', 'gap-lg' ) ], onChange: ( gap ) => set( { gap } ) } )
@@ -206,6 +232,8 @@
 					)
 				),
 				el( 'div', blockProps,
+					( a.filters || a.searchBox ) && el( 'div', { style: { display: 'flex', gap: '8px', marginBottom: '8px', opacity: 0.6, fontSize: '12px' } },
+						[ ...( a.searchBox ? [ 'Search' ] : [] ), ...a.filters.split( ',' ).map( ( x ) => x.trim() ).filter( Boolean ) ].map( ( x ) => el( 'span', { key: x, style: { border: '1px solid currentColor', borderRadius: '4px', padding: '2px 8px' } }, `${ x } ▾` ) ) ),
 					el( 'p', { className: 'mcc-loop-note', style: { margin: '0 0 .5rem', fontSize: '12px', opacity: 0.7 } },
 						group
 							? `Loop: ${ group.label } rows${ a.from ? ` from ${ a.from }` : '' }${ a.where ? ` where ${ a.where }` : '' }. This item repeats for each one.`
@@ -255,31 +283,94 @@
 	/* The Fields panel beside a post */
 
 	const FieldControl = ( { name, f, value, onChange } ) => {
-		const common = { label: f.label, help: f.help };
+		const common = { label: f.required ? `${ f.label } *` : f.label, help: f.help };
 		switch ( f.type ) {
 			case 'text': return el( TextareaControl, { ...common, value: value ?? '', onChange } );
+			case 'html': return el( TextareaControl, { ...common, help: f.help || 'HTML: <strong>, <em>, <a href>, <ul><li>…', rows: 6, value: value ?? '', onChange } );
+			case 'color': return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
+				el( 'p', { style: { fontWeight: 500, fontSize: '11px', textTransform: 'uppercase', margin: '0 0 8px' } }, common.label ),
+				el( ColorPalette, { value: value || undefined, onChange: ( v ) => onChange( v || '' ), colors: wp.data.select( 'core/block-editor' )?.getSettings?.()?.colors || [] } ),
+				f.help && el( 'p', { className: 'components-base-control__help' }, f.help ) );
+			case 'file': return el( MediaControl, { ...common, value, onChange, kind: 'file' } );
+			case 'gallery': return el( GalleryControl, { ...common, value, onChange } );
+			case 'location': return el( LocationControl, { ...common, value, onChange } );
 			case 'number': return el( TextControl, { ...common, type: 'number', value: value ?? '', onChange: ( v ) => onChange( v === '' ? 0 : Number( v ) ) } );
 			case 'boolean': return el( ToggleControl, { ...common, checked: !! value, onChange } );
 			case 'date': return el( TextControl, { ...common, type: 'date', value: value ?? '', onChange } );
 			case 'url': return el( TextControl, { ...common, type: 'url', value: value ?? '', onChange } );
 			case 'email': return el( TextControl, { ...common, type: 'email', value: value ?? '', onChange } );
 			case 'select': return el( SelectControl, { ...common, value: value ?? '', options: [ opt( '—', '' ), ...( f.options || [] ).map( ( o ) => opt( o, o ) ) ], onChange } );
-			case 'image': return el( ImageControl, { ...common, value, onChange } );
+			case 'image': return el( MediaControl, { ...common, value, onChange, kind: 'image' } );
 			case 'relation': return el( RelationControl, { ...common, f, value, onChange } );
 			default: return el( TextControl, { ...common, value: value ?? '', onChange } );
 		}
 	};
 
-	const ImageControl = ( { label, help, value, onChange } ) => {
-		const url = useSelect( ( select ) => ( value ? select( 'core' ).getMedia( value )?.source_url : null ), [ value ] );
+	const caption = ( label ) => el( 'p', { style: { fontWeight: 500, fontSize: '11px', textTransform: 'uppercase', margin: '0 0 8px' } }, label );
+
+	// An image, or any file (a PDF, a price list…): an attachment from the media library, by its id.
+	const MediaControl = ( { label, help, value, onChange, kind } ) => {
+		const media = useSelect( ( select ) => ( value ? select( 'core' ).getMedia( value ) : null ), [ value ] );
+		const url = media?.source_url;
 		return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
-			el( 'p', { style: { fontWeight: 500, fontSize: '11px', textTransform: 'uppercase', margin: '0 0 8px' } }, label ),
-			url && el( 'img', { src: url, alt: '', style: { width: '100%', height: 'auto', marginBottom: '8px' } } ),
+			caption( label ),
+			url && ( kind === 'image'
+				? el( 'img', { src: url, alt: '', style: { width: '100%', height: 'auto', marginBottom: '8px' } } )
+				: el( 'p', { style: { margin: '0 0 8px', wordBreak: 'break-all' } }, el( 'a', { href: url, target: '_blank', rel: 'noreferrer' }, url.split( '/' ).pop() ) ) ),
 			el( MediaUploadCheck, null, el( MediaUpload, {
-				onSelect: ( media ) => onChange( media.id ), allowedTypes: [ 'image' ], value,
-				render: ( { open } ) => el( Button, { variant: 'secondary', onClick: open }, value ? 'Replace' : 'Choose an image' ),
+				onSelect: ( m ) => onChange( m.id ), allowedTypes: kind === 'image' ? [ 'image' ] : undefined, value,
+				render: ( { open } ) => el( Button, { variant: 'secondary', onClick: open }, value ? 'Replace' : kind === 'image' ? 'Choose an image' : 'Choose a file' ),
 			} ) ),
 			value ? el( Button, { variant: 'link', isDestructive: true, onClick: () => onChange( 0 ), style: { marginLeft: '8px' } }, 'Remove' ) : null,
+			help && el( 'p', { className: 'components-base-control__help' }, help )
+		);
+	};
+
+	// Several images in an order: picked (and reordered) in the media library's gallery view.
+	const GalleryControl = ( { label, help, value, onChange } ) => {
+		const ids = idsOf( value );
+		const urls = useSelect( ( select ) => ids.map( ( id ) => select( 'core' ).getMedia( id )?.media_details?.sizes?.thumbnail?.source_url ?? select( 'core' ).getMedia( id )?.source_url ), [ ids.join( ',' ) ] );
+		return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
+			caption( label ),
+			ids.length > 0 && el( 'div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '4px', marginBottom: '8px' } },
+				urls.map( ( u, i ) => el( 'img', { key: ids[ i ], src: u, alt: '', style: { width: '100%', aspectRatio: '1', objectFit: 'cover' } } ) ) ),
+			el( MediaUploadCheck, null, el( MediaUpload, {
+				multiple: 'add', gallery: true, allowedTypes: [ 'image' ], value: ids,
+				onSelect: ( list ) => onChange( list.map( ( m ) => m.id ) ),
+				render: ( { open } ) => el( Button, { variant: 'secondary', onClick: open }, ids.length ? `Edit the ${ ids.length } images` : 'Choose images' ),
+			} ) ),
+			ids.length > 0 && el( Button, { variant: 'link', isDestructive: true, onClick: () => onChange( [] ), style: { marginLeft: '8px' } }, 'Clear' ),
+			help && el( 'p', { className: 'components-base-control__help' }, help )
+		);
+	};
+
+	// A place: its address, and its latitude and longitude, found from the address (OpenStreetMap's search) or typed.
+	const LocationControl = ( { label, help, value, onChange } ) => {
+		const v = value && typeof value === 'object' && ! Array.isArray( value ) ? value : {};
+		const [ busy, setBusy ] = useState( '' );
+		const put = ( patch ) => onChange( { address: '', lat: '', lng: '', ...v, ...patch } );
+		const find = () => {
+			setBusy( 'Looking…' );
+			window.fetch( `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${ encodeURIComponent( v.address || '' ) }` )
+				.then( ( r ) => r.json() )
+				.then( ( found ) => {
+					if ( ! found[ 0 ] ) return setBusy( 'No place found for that address.' );
+					put( { lat: Number( Number( found[ 0 ].lat ).toFixed( 6 ) ), lng: Number( Number( found[ 0 ].lon ).toFixed( 6 ) ) } );
+					setBusy( '' );
+				}, () => setBusy( 'Couldn’t reach the map search.' ) );
+		};
+		const has = v.lat !== '' && v.lat != null && v.lng !== '' && v.lng != null;
+		return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
+			caption( label ),
+			el( TextControl, { label: 'Address', value: v.address ?? '', onChange: ( address ) => put( { address } ) } ),
+			el( 'div', { style: { display: 'flex', gap: '8px' } },
+				el( TextControl, { label: 'Latitude', type: 'number', value: v.lat ?? '', onChange: ( lat ) => put( { lat: lat === '' ? '' : Number( lat ) } ) } ),
+				el( TextControl, { label: 'Longitude', type: 'number', value: v.lng ?? '', onChange: ( lng ) => put( { lng: lng === '' ? '' : Number( lng ) } ) } )
+			),
+			el( Button, { variant: 'secondary', size: 'small', disabled: ! v.address, onClick: find }, 'Find it from the address' ),
+			busy && el( 'p', { className: 'components-base-control__help' }, busy ),
+			has && el( 'iframe', { title: 'Map', loading: 'lazy', style: { width: '100%', height: '180px', border: 0, marginTop: '8px' },
+				src: `https://www.openstreetmap.org/export/embed.html?bbox=${ v.lng - 0.01 },${ v.lat - 0.006 },${ v.lng + 0.01 },${ v.lat + 0.006 }&marker=${ v.lat },${ v.lng }` } ),
 			help && el( 'p', { className: 'components-base-control__help' }, help )
 		);
 	};
@@ -323,7 +414,8 @@
 
 	// A group's value: its fields (an object), or its rows (a list) to add, reorder and remove.
 	const GroupControl = ( { g, value, onChange } ) => {
-		const fieldsOf = ( row, change ) => Object.entries( g.fields ).map( ( [ name, f ] ) =>
+		// A field with show_if shows while the row's (or the post's) other values pass it.
+		const fieldsOf = ( row, change ) => Object.entries( g.fields ).filter( ( [ , f ] ) => ! f.show_if || passes( row || {}, f.show_if ) ).map( ( [ name, f ] ) =>
 			el( FieldControl, { key: name, name, f, value: row?.[ name ], onChange: ( v ) => change( { ...( row || {} ), [ name ]: v } ) } ) );
 		if ( ! g.repeat ) {
 			return el( Fragment, null, fieldsOf( value && ! Array.isArray( value ) ? value : {}, onChange ) );
@@ -349,17 +441,18 @@
 		);
 	};
 
-	// The groups on a post: on its type, or on it by slug ("page:gallery").
-	const groupsOn = ( postType, slug ) => Object.entries( data.groups ).filter( ( [ , g ] ) =>
-		g.on.some( ( on ) => on === postType || on === `${ postType }:${ slug }` ) );
+	// The groups on a post: on its type, on it by slug ("page:gallery") or by its template ("page@landing").
+	const groupsOn = ( postType, slug, template ) => Object.entries( data.groups ).filter( ( [ , g ] ) =>
+		g.on.some( ( on ) => on === postType || on === `${ postType }:${ slug }` || ( template && on === `${ postType }@${ template }` ) ) );
 
 	// A panel per group: a repeating group's rows are one value (under its name), the others' fields one value each.
 	const FieldsPanel = () => {
-		const { postType, slug } = useSelect( ( select ) => ( {
+		const { postType, slug, template } = useSelect( ( select ) => ( {
 			postType: select( 'core/editor' )?.getCurrentPostType(),
 			slug: select( 'core/editor' )?.getEditedPostAttribute( 'slug' ),
+			template: select( 'core/editor' )?.getEditedPostAttribute( 'template' ),
 		} ), [] );
-		const groups = groupsOn( postType, slug );
+		const groups = groupsOn( postType, slug, template );
 		const [ meta, setMeta ] = useEntityProp( 'postType', postType, 'meta' );
 		if ( ! groups.length || ! wp.editor?.PluginDocumentSettingPanel ) return null;
 		return el( Fragment, null, groups.map( ( [ name, g ] ) => el( wp.editor.PluginDocumentSettingPanel, { key: name, name: `marccent-content-group-${ name }`, title: g.label },
@@ -368,8 +461,25 @@
 				: el( GroupControl, { g, value: Object.fromEntries( Object.keys( g.fields ).map( ( f ) => [ f, meta?.[ f ] ] ) ), onChange: ( v ) => setMeta( { ...meta, ...v } ) } )
 		) ) );
 	};
-	window.marccentContentUI = { FieldControl, GroupControl, opt };
+	window.marccentContentUI = { FieldControl, GroupControl, opt, passes };
 	wp.plugins.registerPlugin( 'marccent-content-fields', { render: FieldsPanel } );
+
+	/* Show if, on every block */
+
+	wp.hooks.addFilter( 'blocks.registerBlockType', 'marccent-content/show-if', ( settings ) => ( {
+		...settings,
+		attributes: { ...settings.attributes, mccShowIf: { type: 'string', default: '' } },
+	} ) );
+	wp.hooks.addFilter( 'editor.BlockEdit', 'marccent-content/show-if', wp.compose.createHigherOrderComponent( ( BlockEdit ) => ( props ) => el( Fragment, null,
+		el( BlockEdit, props ),
+		props.isSelected && el( InspectorControls, null, el( PanelBody, { title: 'Show if', initialOpen: !! props.attributes.mccShowIf },
+			el( TextControl, {
+				label: 'Only when', value: props.attributes.mccShowIf || '',
+				help: 'A where on the post’s (or the Loop row’s) values: price>0, phone!= (has one), featured=yes, office.phone!=, status=New,Scheduled. Empty: always.',
+				onChange: ( mccShowIf ) => props.setAttributes( { mccShowIf } ),
+			} )
+		) )
+	), 'withShowIf' ) );
 
 	/* The binding source */
 

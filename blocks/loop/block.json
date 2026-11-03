@@ -24,7 +24,10 @@
 		"excludeCurrent": { "type": "boolean", "default": true },
 		"cols": { "type": "number", "default": 3 },
 		"gap": { "type": "string", "default": "" },
-		"empty": { "type": "string", "default": "Nothing here yet." }
+		"empty": { "type": "string", "default": "Nothing here yet." },
+		"paginate": { "type": "boolean", "default": false },
+		"filters": { "type": "string", "default": "" },
+		"searchBox": { "type": "boolean", "default": false }
 	},
 	"usesContext": [ "postId", "postType" ],
 	"providesContext": { "marccent/source": "source" },

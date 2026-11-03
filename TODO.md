@@ -1,7 +1,8 @@
 # To do
 
-Relation fields, a Loop's `where` on posts and the `count` / `sum` / `avg` / `min` / `max` tokens are in the working
-tree (not committed, no version bump yet), tested on the crm-sample site (58 checks).
+Relation fields, a Loop's `where` on posts and the `count` / `sum` / `avg` / `min` / `max` tokens are committed,
+tested on the crm-sample site (58 checks). 0.2.0 (2026-11-02) added the field rules, the new field types, groups on
+terms, users and templates, the Loop's paging, filters and search, and Show if.
 
 - [ ] Peer review, then commit and release 0.2.0 (a new field type; the Loop's `relation` attribute and `where` on
       posts; the Loop's current post is its context's, so Loops nest; the Loop skips WordPress's unused render of its
@@ -15,15 +16,19 @@ tree (not committed, no version bump yet), tested on the crm-sample site (58 che
 - [ ] **`!=` on a many-to-many** is approximate: `products!=12` still passes a work order with 12 and another product
       (needs a `NOT EXISTS` subquery).
 - [ ] **Sort or filter by an aggregate** ("accounts with the most work orders first", "accounts with no contacts").
-- [ ] **Required and unique fields** (a SKU, an email).
+- [x] **Required and unique fields** (a SKU, an email). Checked when the editor saves (REST); a post saved some other
+      way (code, an import) isn't checked.
 
 From the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo):
 
 - [ ] **Site-wide counts and sums** (`count:account`, `sum:work_order.total`): a dashboard's headline numbers.
-- [ ] **A where for an empty field** (`parent_account=` or `parent_account!*`): top-level accounts only.
-- [ ] **Show if**: hide a block (or a paragraph of tokens) when a value is empty, or unless a where passes.
+- [x] **A where for an empty field** (`parent_account=`; `parent_account!=` for not empty).
+- [x] **Show if**: hide a block (or a paragraph of tokens) when a value is empty, or unless a where passes.
 - [ ] **A page per record from a normal page**: a Loop taking its current post from the address (`?account=12`).
-- [ ] **Paging** for a Loop (next / previous), and **visitors' filters** (a search box, a status picker).
+- [x] **Paging** for a Loop (next / previous), and **visitors' filters** (a search box, a status picker).
+- [ ] **A map picker** for a location field: today the address is looked up (OpenStreetMap), or the latitude and
+      longitude typed; no clicking on a map.
+- [ ] **Repeating groups inside groups** (ACF's nested repeaters, flexible content).
 - [ ] **Group by** a field: one Loop for the board, its items in a heading per status.
 - [ ] **Sums across rows of many posts** (a product's quantity on every work order's line items).
 - [ ] **The editor's preview** of a related Loop (the related posts, not the type's first) and of counts and sums.

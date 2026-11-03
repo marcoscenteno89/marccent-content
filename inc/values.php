@@ -7,6 +7,10 @@
  *   terms:<taxonomy> (the post's terms, comma-separated)
  *   <field>, <field>:<size> for an image field: one of the spec's fields (inc/types.php), with its prefix and suffix
  *   <image field>:alt: the image's alt text
+ *   <file field>: its URL; <file field>:name its file name
+ *   <gallery field>: its images' URLs, comma-separated (<field>:<size>); :count how many
+ *   <location field>: its address; :lat, :lng, :map (a Google Maps link to it)
+ *   <html field>: its text (the Field block shows it as HTML)
  *   <group>.<field>: a field of a group that doesn't repeat (the post's, else the site's): "office.phone"
  *   <relation>: the related post's title (several: comma-separated)
  *   <relation>.<key>: any of these keys of the related post, followed as far as it goes ("work_order.account.title");
@@ -332,10 +336,29 @@ function mcc_display_value( $raw, array $field, string $size = '' ): string {
 		$text = fn( $id ) => trim( html_entity_decode( wp_strip_all_tags( get_the_title( $id ) ), ENT_QUOTES, 'UTF-8' ) );
 		return implode( ', ', array_map( $text, mcc_related_ids( $raw, $field ) ) );
 	}
+	if ( 'gallery' === $field['type'] ) {
+		$ids = array_filter( array_map( 'absint', (array) $raw ) );
+		return 'count' === $size ? (string) count( $ids ) : implode( ', ', array_filter( array_map( fn( $id ) => (string) wp_get_attachment_image_url( $id, $size ?: 'large' ), $ids ) ) );
+	}
+	if ( 'location' === $field['type'] ) {
+		$l = (array) $raw;
+		if ( 'map' === $size ) {
+			$q = '' !== (string) ( $l['lat'] ?? '' ) ? $l['lat'] . ',' . $l['lng'] : (string) ( $l['address'] ?? '' );
+			return '' !== $q ? 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode( $q ) : '';
+		}
+		return (string) ( $l[ in_array( $size, array( 'lat', 'lng' ), true ) ? $size : 'address' ] ?? '' );
+	}
 	if ( is_array( $raw ) || is_object( $raw ) ) {
 		return '';
 	}
 	switch ( $field['type'] ) {
+		case 'file':
+			if ( ! $raw ) {
+				return '';
+			}
+			return 'name' === $size ? wp_basename( (string) get_attached_file( (int) $raw ) ) : (string) wp_get_attachment_url( (int) $raw );
+		case 'html':
+			return trim( html_entity_decode( wp_strip_all_tags( (string) $raw ), ENT_QUOTES, 'UTF-8' ) );
 		case 'image':
 			if ( 'alt' === $size ) {
 				return $raw ? (string) get_post_meta( (int) $raw, '_wp_attachment_image_alt', true ) : '';
@@ -375,4 +398,23 @@ function mcc_format( string $value, string $format ): string {
 		default:
 			return $value;
 	}
+}
+
+/**
+ * A block's "show if" (its mccShowIf attribute): a where (mcc_where's syntax) on the current row's, post's or site's
+ * values, by any key the tokens take: "price>0", "office.phone!=" (not empty), "featured=1", "status=New,Scheduled".
+ * A yes / no field is 1 or empty. Whether the block shows.
+ */
+function mcc_show_if( string $where, int $post_id ): bool {
+	$tests = mcc_where( $where );
+	if ( ! $tests ) {
+		return true;
+	}
+	$values = array();
+	foreach ( $tests as [ $key ] ) {
+		$value          = mcc_value( $post_id, $key, 'raw' );
+		$values[ $key ] = 'boolean' === ( mcc_field_def( $post_id, $key )['type'] ?? '' ) ? ( __( 'Yes', 'marccent-content' ) === $value ? '1' : '' ) : $value;
+	}
+	$yes = fn( $want ) => in_array( strtolower( $want ), array( 'yes', 'true', 'on' ), true ) ? '1' : ( in_array( strtolower( $want ), array( 'no', 'false', 'off' ), true ) ? '' : $want );
+	return mcc_where_row( $values, array_map( fn( $t ) => array( $t[0], $t[1], $yes( $t[2] ) ), $tests ) );
 }

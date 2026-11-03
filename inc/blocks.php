@@ -11,7 +11,7 @@ add_action( 'init', function () {
 	wp_register_script(
 		'marccent-content-editor',
 		plugins_url( 'assets/editor.js', MCC_FILE ),
-		array( 'wp-api-fetch', 'wp-blocks', 'wp-block-editor', 'wp-components', 'wp-core-data', 'wp-data', 'wp-editor', 'wp-element', 'wp-i18n', 'wp-plugins' ),
+		array( 'wp-api-fetch', 'wp-blocks', 'wp-block-editor', 'wp-components', 'wp-compose', 'wp-core-data', 'wp-data', 'wp-editor', 'wp-element', 'wp-hooks', 'wp-i18n', 'wp-plugins' ),
 		filemtime( MCC_DIR . '/assets/editor.js' ),
 		true
 	);
@@ -58,7 +58,7 @@ function mcc_editor_data(): array {
  *
  * Only posts whose fields pass a where (mcc_where): "status=New,Scheduled&total>=1000".
  */
-function mcc_loop_query( array $a, int $current = 0 ): WP_Query {
+function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ): WP_Query {
 	$rel     = trim( (string) ( $a['relation'] ?? '' ) );
 	$related = null; // the post ids, or the meta query, of a relation
 	if ( str_starts_with( $rel, 'this.' ) ) {
@@ -90,8 +90,15 @@ function mcc_loop_query( array $a, int $current = 0 ): WP_Query {
 		'orderby'             => $a['orderBy'],
 		'has_password'        => false,
 		'ignore_sticky_posts' => true,
-		'no_found_rows'       => true,
+		'no_found_rows'       => empty( $visitor['paged'] ),
 	);
+	// The visitor's page (the Loop's paging): the posts after the earlier pages' and the Loop's own offset.
+	if ( ! empty( $visitor['paged'] ) ) {
+		$args['offset'] += ( max( 1, (int) $visitor['page'] ) - 1 ) * $args['posts_per_page'];
+	}
+	if ( '' !== (string) ( $visitor['search'] ?? '' ) ) {
+		$args['s'] = $visitor['search'];
+	}
 	if ( str_starts_with( $a['orderBy'], 'field:' ) ) {
 		$name             = substr( $a['orderBy'], 6 );
 		$field            = mcc_fields( $a['postType'] )[ $name ] ?? array();
@@ -101,7 +108,7 @@ function mcc_loop_query( array $a, int $current = 0 ): WP_Query {
 	if ( $a['excludeCurrent'] && $current ) {
 		$args['post__not_in'] = array( $current );
 	}
-	$meta = array_merge( $related['meta_query'] ?? array(), mcc_where_meta( $a['postType'], mcc_where( (string) ( $a['where'] ?? '' ) ) ) );
+	$meta = array_merge( $related['meta_query'] ?? array(), mcc_where_meta( $a['postType'], array_merge( mcc_where( (string) ( $a['where'] ?? '' ) ), $visitor['tests'] ?? array() ) ) );
 	unset( $related['meta_query'] );
 	if ( $related ) {
 		$args = array_merge( $args, $related );
@@ -116,6 +123,12 @@ function mcc_loop_query( array $a, int $current = 0 ): WP_Query {
 	$terms = array_filter( array_map( 'trim', explode( ',', (string) $a['terms'] ) ) );
 	if ( $a['taxonomy'] && $terms ) {
 		$args['tax_query'] = array( array( 'taxonomy' => $a['taxonomy'], 'field' => 'slug', 'terms' => $terms ) );
+	}
+	// The visitor's term filters: each taxonomy's chosen term, on top of the Loop's own.
+	foreach ( (array) ( $visitor['terms'] ?? array() ) as $tax => $slug ) {
+		if ( is_object_in_taxonomy( $a['postType'], $tax ) ) {
+			$args['tax_query'][] = array( 'taxonomy' => $tax, 'field' => 'slug', 'terms' => array( $slug ) );
+		}
 	}
 	// The posts in one query, not their ids and then the posts: without a persistent object cache to read them from,
 	// WordPress's split is a second round trip to the database.
@@ -135,7 +148,7 @@ function mcc_loop_query( array $a, int $current = 0 ): WP_Query {
  * else the page being viewed), a page (its path, "gallery") or the site ("options"), in their saved order, those that
  * match where (mcc_where), then offset and how many.
  */
-function mcc_loop_rows( array $a, int $current = 0 ): array {
+function mcc_loop_rows( array $a, int $current = 0, array $visitor = array(), ?int &$total = null ): array {
 	$g = mcc_groups()[ $a['source'] ] ?? null;
 	if ( ! $g || ! $g['repeat'] ) {
 		return array();
@@ -151,9 +164,15 @@ function mcc_loop_rows( array $a, int $current = 0 ): array {
 	}
 	$rows = $post_id < 0 ? array() : mcc_group_value( $a['source'], $post_id );
 
-	$tests = mcc_where( (string) $a['where'] );
-	$rows  = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests ) );
-	return array_slice( array_values( $rows ), max( 0, (int) $a['offset'] ), max( 1, (int) $a['perPage'] ) );
+	$tests  = array_merge( mcc_where( (string) $a['where'] ), $visitor['tests'] ?? array() );
+	$search = mb_strtolower( (string) ( $visitor['search'] ?? '' ) );
+	$rows   = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests )
+		&& ( '' === $search || str_contains( mb_strtolower( implode( ' ', array_filter( $row, 'is_scalar' ) ) ), $search ) ) );
+	$offset = max( 0, (int) $a['offset'] );
+	$per    = max( 1, (int) $a['perPage'] );
+	$total  = max( 0, count( $rows ) - $offset );
+	$skip   = ! empty( $visitor['paged'] ) ? ( max( 1, (int) $visitor['page'] ) - 1 ) * $per : 0;
+	return array_slice( array_values( $rows ), $offset + $skip, $per );
 }
 
 /**
@@ -162,12 +181,14 @@ function mcc_loop_rows( array $a, int $current = 0 ): array {
  *   !=  none of them
  *   ~   in the field's comma-separated list: featured~home (several related posts: products~12)
  *   < > <= >=  numbers, or dates (2026-10-31; "today" is today's)
+ *   *=  contains the text, any case: name*=smith
+ * With nothing after = or !=, the field is empty or not: parent_account= (none), phone!= (has one).
  * A test that doesn't parse is left out; so is one on a field the post type doesn't have.
  */
 function mcc_where( string $where ): array {
 	$tests = array();
 	foreach ( array_filter( array_map( 'trim', explode( '&', html_entity_decode( $where, ENT_QUOTES | ENT_HTML5, 'UTF-8' ) ) ) ) as $test ) {
-		if ( preg_match( '/^([a-z0-9_\-]+)\s*(!=|<=|>=|=|~|<|>)\s*(.*)$/i', $test, $m ) ) {
+		if ( preg_match( '/^([a-z0-9_\-.:]+)\s*(!=|<=|>=|\*=|=|~|<|>)\s*(.*)$/i', $test, $m ) ) {
 			$want    = trim( $m[3] );
 			$tests[] = array( $m[1], $m[2], 'today' === strtolower( $want ) ? current_time( 'Y-m-d' ) : $want );
 		}
@@ -190,6 +211,9 @@ function mcc_where_row( array $row, array $tests ): bool {
 				break;
 			case '~':
 				$pass = in_array( $want, is_array( $raw ) ? $have : array_map( 'trim', explode( ',', (string) $raw ) ), true );
+				break;
+			case '*=':
+				$pass = '' === $want || str_contains( mb_strtolower( implode( ' ', $have ) ), mb_strtolower( $want ) );
 				break;
 			default:
 				$pass = mcc_compare( (string) ( $have[0] ?? '' ), $op, $want );
@@ -228,7 +252,18 @@ function mcc_where_meta( string $type, array $tests ): array {
 			$query[] = $yes ? array( 'key' => $name, 'value' => '1' ) : array( 'relation' => 'OR', $unset, array( 'key' => $name, 'value' => '1', 'compare' => '!=' ) );
 			continue;
 		}
+		if ( '' === $want && in_array( $op, array( '=', '!=' ), true ) ) {
+			// Empty: no row, or an empty one (an unset relation is 0). Not empty: a row with a value.
+			$blank   = 'NUMERIC' === $cast ? '0' : '';
+			$query[] = '=' === $op
+				? array( 'relation' => 'OR', $unset, array( 'key' => $name, 'value' => array( '', $blank ), 'compare' => 'IN' ) )
+				: array( 'key' => $name, 'value' => array( '', $blank ), 'compare' => 'NOT IN' );
+			continue;
+		}
 		switch ( $op ) {
+			case '*=':
+				$query[] = array( 'key' => $name, 'value' => $want, 'compare' => 'LIKE' );
+				break;
 			case '=':
 				$query[] = array( 'key' => $name, 'value' => $wants, 'compare' => 'IN', 'type' => $cast );
 				break;
@@ -246,3 +281,130 @@ function mcc_where_meta( string $type, array $tests ): array {
 	}
 	return $query;
 }
+
+/* The Loop's visitor side: paging and filters */
+
+/**
+ * What the visitor asked a Loop for, from the address: its page (?mcc2p=3), its search (?mcc2s=…) and its filters
+ * (?mcc2_status=New, ?mcc2_terms_project_service=patios). Each Loop on a page has its own number, in the order they
+ * render, so two Loops page apart. Only the filters the Loop offers are read.
+ */
+function mcc_loop_visitor( array $a, int $n ): array {
+	$get     = fn( $k ) => isset( $_GET[ $k ] ) && is_scalar( $_GET[ $k ] ) ? trim( sanitize_text_field( wp_unslash( (string) $_GET[ $k ] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification -- a public listing's filters
+	$visitor = array( 'paged' => ! empty( $a['paginate'] ), 'page' => max( 1, (int) $get( "mcc{$n}p" ) ), 'search' => ! empty( $a['searchBox'] ) ? mb_substr( $get( "mcc{$n}s" ), 0, 100 ) : '', 'tests' => array(), 'terms' => array(), 'chosen' => array() );
+	foreach ( mcc_loop_filters( $a ) as $key => $f ) {
+		$value = mb_substr( $get( "mcc{$n}_" . str_replace( ':', '_', $key ) ), 0, 100 );
+		if ( '' === $value ) {
+			continue;
+		}
+		$visitor['chosen'][ $key ] = $value;
+		if ( str_starts_with( $key, 'terms:' ) ) {
+			$visitor['terms'][ substr( $key, 6 ) ] = sanitize_title( $value );
+		} else {
+			$op                 = in_array( $f['type'], array( 'string', 'text', 'email', 'url' ), true ) ? '*=' : ( 'relation' === $f['type'] || 'select' === $f['type'] || 'boolean' === $f['type'] || 'number' === $f['type'] ? '=' : '*=' );
+			$visitor['tests'][] = array( $key, $op, $value );
+		}
+	}
+	return $visitor;
+}
+
+// The filters a Loop offers visitors: its "filters" attribute's fields (and terms:<taxonomy>), each with its field.
+function mcc_loop_filters( array $a ): array {
+	$fields = '' !== $a['source'] ? ( mcc_groups()[ $a['source'] ]['fields'] ?? array() ) : mcc_fields( $a['postType'] );
+	$out    = array();
+	foreach ( array_filter( array_map( 'trim', explode( ',', (string) ( $a['filters'] ?? '' ) ) ) ) as $key ) {
+		if ( str_starts_with( $key, 'terms:' ) && '' === $a['source'] && taxonomy_exists( substr( $key, 6 ) ) ) {
+			$tax          = get_taxonomy( substr( $key, 6 ) );
+			$out[ $key ] = array( 'type' => 'terms', 'label' => $tax->labels->singular_name );
+		} elseif ( isset( $fields[ $key ] ) ) {
+			$out[ $key ] = $fields[ $key ];
+		}
+	}
+	return $out;
+}
+
+// The filters' form, above the Loop: a select for a choice, a yes / no, a relation or terms; a text box for the rest.
+function mcc_loop_filters_html( array $a, int $n, array $visitor ): string {
+	$filters = mcc_loop_filters( $a );
+	if ( ! $filters && empty( $a['searchBox'] ) ) {
+		return '';
+	}
+	$controls = '';
+	if ( ! empty( $a['searchBox'] ) ) {
+		$controls .= sprintf( '<label class="mcc-filter"><span>%s</span><input type="search" class="input" name="mcc%ds" value="%s"></label>', esc_html__( 'Search', 'marccent-content' ), $n, esc_attr( $visitor['search'] ) );
+	}
+	foreach ( $filters as $key => $f ) {
+		$name    = "mcc{$n}_" . str_replace( ':', '_', $key );
+		$current = $visitor['chosen'][ $key ] ?? '';
+		$choices = null;
+		if ( 'terms' === $f['type'] ) {
+			$terms   = get_terms( array( 'taxonomy' => substr( $key, 6 ), 'hide_empty' => true ) );
+			$choices = is_array( $terms ) ? wp_list_pluck( $terms, 'name', 'slug' ) : array();
+		} elseif ( 'select' === $f['type'] ) {
+			$choices = array_combine( $f['options'] ?? array(), $f['options'] ?? array() ) ?: array();
+		} elseif ( 'boolean' === $f['type'] ) {
+			$choices = array( '1' => __( 'Yes', 'marccent-content' ), '0' => __( 'No', 'marccent-content' ) );
+		} elseif ( 'relation' === $f['type'] ) {
+			$choices = array();
+			foreach ( get_posts( array( 'post_type' => $f['to'], 'numberposts' => 200, 'orderby' => 'title', 'order' => 'ASC', 'has_password' => false ) ) as $p ) {
+				$choices[ $p->ID ] = wp_strip_all_tags( get_the_title( $p ) );
+			}
+		}
+		if ( null === $choices ) {
+			$control = sprintf( '<input class="input" name="%s" value="%s">', esc_attr( $name ), esc_attr( $current ) );
+		} else {
+			$options = '<option value="">' . esc_html__( 'Any', 'marccent-content' ) . '</option>';
+			foreach ( $choices as $value => $label ) {
+				$options .= sprintf( '<option value="%s"%s>%s</option>', esc_attr( (string) $value ), selected( (string) $current, (string) $value, false ), esc_html( $label ) );
+			}
+			$control = sprintf( '<select class="input" name="%s">%s</select>', esc_attr( $name ), $options );
+		}
+		$controls .= sprintf( '<label class="mcc-filter"><span>%s</span>%s</label>', esc_html( $f['label'] ), $control );
+	}
+	// The address's other parameters (another Loop's page and filters) carry over; this Loop starts at its first page.
+	$hidden = '';
+	foreach ( $_GET as $k => $v ) { // phpcs:ignore WordPress.Security.NonceVerification -- carried over, escaped
+		if ( is_scalar( $v ) && ! preg_match( "/^mcc{$n}(p|s|_.*)$/", (string) $k ) ) {
+			$hidden .= sprintf( '<input type="hidden" name="%s" value="%s">', esc_attr( (string) $k ), esc_attr( wp_unslash( (string) $v ) ) );
+		}
+	}
+	$reset = $visitor['chosen'] || '' !== $visitor['search'] ? sprintf( ' <a class="btn" href="%s#mcc-loop-%d">%s</a>', esc_url( remove_query_arg( array_merge( array( "mcc{$n}p", "mcc{$n}s" ), array_map( fn( $k ) => "mcc{$n}_" . str_replace( ':', '_', $k ), array_keys( $filters ) ) ) ) ), $n, esc_html__( 'Clear', 'marccent-content' ) ) : '';
+	return sprintf( '<form class="mcc-filters" method="get" action="#mcc-loop-%d" role="search">%s%s<div class="mcc-filter mcc-filter-go"><button class="btn primary" type="submit">%s</button>%s</div></form>', $n, $hidden, $controls, esc_html__( 'Filter', 'marccent-content' ), $reset );
+}
+
+// The pages' links, under the Loop: previous, "Page 2 of 5", next; nothing for one page.
+function mcc_loop_pager_html( int $n, int $page, int $pages ): string {
+	if ( $pages < 2 ) {
+		return '';
+	}
+	$link = fn( $p, $label, $rel ) => sprintf( '<a class="btn" rel="%s" href="%s#mcc-loop-%d">%s</a>', $rel, esc_url( $p > 1 ? add_query_arg( "mcc{$n}p", $p ) : remove_query_arg( "mcc{$n}p" ) ), $n, esc_html( $label ) );
+	return sprintf(
+		'<nav class="mcc-pager" aria-label="%s">%s<span>%s</span>%s</nav>',
+		esc_attr__( 'Pages', 'marccent-content' ),
+		$page > 1 ? $link( $page - 1, __( '← Previous', 'marccent-content' ), 'prev' ) : '<span></span>',
+		/* translators: 1: this page, 2: how many pages */
+		esc_html( sprintf( __( 'Page %1$d of %2$d', 'marccent-content' ), $page, $pages ) ),
+		$page < $pages ? $link( $page + 1, __( 'Next →', 'marccent-content' ), 'next' ) : '<span></span>'
+	);
+}
+
+add_action( 'wp_enqueue_scripts', function () {
+	wp_add_inline_style( 'marccent', '.mcc-filters{display:flex;flex-wrap:wrap;gap:.75rem;align-items:end;margin-bottom:1.25rem}.mcc-filter{display:grid;gap:.25rem;min-width:10rem}.mcc-filter>span{font-size:.85rem;opacity:.8}.mcc-filter-go{display:flex;gap:.5rem;min-width:0}.mcc-pager{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-top:1.5rem}' );
+}, 20 );
+
+/*
+ * "Show if" on any block (the mccShowIf attribute, the editor's "Show if" panel): a where on the current row's,
+ * post's or site's values (mcc_show_if). The block, and everything in it, renders only when it passes.
+ */
+add_filter( 'register_block_type_args', function ( $args ) {
+	$args['attributes']['mccShowIf'] = array( 'type' => 'string', 'default' => '' );
+	return $args;
+} );
+
+add_filter( 'render_block', function ( $html, $block, $instance = null ) {
+	$if = (string) ( $block['attrs']['mccShowIf'] ?? '' );
+	if ( '' === trim( $if ) || is_admin() ) {
+		return $html;
+	}
+	return mcc_show_if( $if, mcc_context_post( $instance ) ) ? $html : '';
+}, 5, 3 );
