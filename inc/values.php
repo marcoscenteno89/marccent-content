@@ -16,8 +16,8 @@
  *   <relation>.<key>: any of these keys of the related post, followed as far as it goes ("work_order.account.title");
  *   of several related posts, each one's, comma-separated ("products.title")
  *
- *   count:<what>, sum:<what>.<key>, avg:…, min:…, max:… over related posts or rows, with an optional where after a "?"
- *   (mcc_aggregate): "count:work_order.account?status=New", "sum:this.line_items.quantity"
+ *   count:<what>, sum:<what>.<key>, avg:…, min:…, max:… over related posts, rows or a type's posts, with an optional
+ *   where after a "?" (mcc_aggregate): "count:work_order.account?status=New", "sum:this.line_items.quantity", "count:city"
  *
  * Inside a Loop of a group's rows, the row's fields come first: "caption", "image:medium".
  *
@@ -148,6 +148,11 @@ function mcc_key_posts( int $post_id, string $key ): ?array {
 function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	[ $name, $arg ] = array_pad( explode( ':', $key, 2 ), 2, '' );
 
+	// {{ loop:n }}: the item's place in its Loop, 1 for the first (on later pages, counting on): numbered steps.
+	if ( 'loop' === $name && 'n' === $arg ) {
+		return empty( $GLOBALS['mcc_loop_pos'] ) ? '' : (string) end( $GLOBALS['mcc_loop_pos'] );
+	}
+
 	// A relation followed: the rest of the key on the related post (each one's, when there are several).
 	$step = mcc_relation_step( $post_id, $name );
 	if ( $step ) {
@@ -236,62 +241,94 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 const MCC_AGGREGATES = array( 'count', 'sum', 'avg', 'min', 'max' );
 
 /**
- * A count, sum, average, least or greatest over what's related to a post, as Django's aggregates:
- *   count:work_order.account            the work orders whose account is the post (a post type and its relation)
- *   sum:work_order.account.total        their totals: after the relation, any key on each (through relations too)
- *   count:this.products                 the post's own related posts; sum:this.products.price
- *   count:this.line_items               a repeating group's rows on the post; sum:this.line_items.quantity
- * each with a where after a "?" (mcc_where): "count:work_order.account?status=New,Scheduled". A count is 0 and a sum
- * 0 when there's nothing; an average, least or greatest empty. Empty too when the key names no relation or group.
+ * The set a path names, seen from a post: what count:, sum:… (mcc_aggregate) and {{ each: }} (inc/bindings.php) go
+ * over, only what passes the where's tests (mcc_where):
+ *   this.line_items       a repeating group's rows on the post
+ *   this.products         the post's own related posts, in their order
+ *   work_order.account    the posts of a type whose relation is the post (Django's work_order_set)
+ *   city                  every published post of a type, in their menu order, then by title; page?parent=services:
+ *                         the pages under one
+ * and after the set, a key on each (sum:work_order.account.total, sum:this.line_items.quantity): 'rest'.
+ * [ 'rows' => …, 'fields' => the group's fields ] or [ 'ids' => …, 'to' => their type ], with 'rest'; null when the
+ * path names no group, relation or type (or the post's are behind a password).
  */
-function mcc_aggregate( int $post_id, string $fn, string $arg ): string {
-	[ $path, $where ] = array_pad( explode( '?', $arg, 2 ), 2, '' );
-	if ( ! $post_id || post_password_required( $post_id ) ) {
-		return '';
-	}
-	$tests = mcc_where( $where );
-	$type  = (string) get_post_type( $post_id );
+function mcc_set( int $post_id, string $path, array $tests ): ?array {
+	$open = $post_id && ! post_password_required( $post_id );
 	if ( str_starts_with( $path, 'this.' ) ) {
+		if ( ! $open ) {
+			return null;
+		}
+		$type             = (string) get_post_type( $post_id );
 		[ $first, $rest ] = array_pad( explode( '.', substr( $path, 5 ), 2 ), 2, '' );
 		$g                = mcc_groups()[ $first ] ?? null;
 		if ( $g && $g['repeat'] && in_array( $type, mcc_group_types( $g ), true ) ) {
-			$rows   = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
-			$values = array();
-			foreach ( '' === $rest ? array() : $rows as $r ) {
-				$GLOBALS['mcc_rows'][] = array( 'fields' => $g['fields'], 'values' => $r );
-				$values[]              = mcc_value( $post_id, $rest, 'raw' );
-				array_pop( $GLOBALS['mcc_rows'] );
-			}
-			return mcc_reduce( $fn, count( $rows ), $values );
+			$rows = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+			return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => $rest );
 		}
 		$f = mcc_fields( $type )[ $first ] ?? null;
 		if ( ! $f || 'relation' !== $f['type'] ) {
-			return '';
+			return null;
 		}
-		$to  = $f['to'];
 		$ids = mcc_related_ids( mcc_meta( $post_id, $first, $f ), $f );
 		if ( $ids && $tests ) {
 			$ids = get_posts( array( 'post_type' => $f['to'], 'post__in' => $ids, 'orderby' => 'post__in', 'posts_per_page' => -1, 'fields' => 'ids', 'meta_query' => mcc_where_meta( $f['to'], $tests ) ) );
 		}
-	} else {
-		[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
-		$f                  = mcc_fields( $of )[ $by ] ?? null;
-		if ( ! $f || 'relation' !== $f['type'] ) {
-			return '';
-		}
-		$to  = $of;
-		$ids = get_posts( array(
-			'post_type'      => $of,
-			'post_status'    => 'publish',
-			'has_password'   => false,
-			'posts_per_page' => -1,
-			'fields'         => 'ids',
-			'meta_query'     => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests ) ),
-		) );
+		return array( 'ids' => $ids, 'to' => $f['to'], 'rest' => $rest );
 	}
+	[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
+	$f                  = mcc_fields( $of )[ $by ] ?? null;
+	$posts              = array( 'post_type' => $of, 'post_status' => 'publish', 'has_password' => false, 'posts_per_page' => -1, 'fields' => 'ids' );
+	if ( $f && 'relation' === $f['type'] ) {
+		if ( ! $open ) {
+			return null;
+		}
+		$ids = get_posts( $posts + array( 'meta_query' => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests ) ) ) );
+		return array( 'ids' => $ids, 'to' => $of, 'rest' => $rest );
+	}
+	if ( ! post_type_exists( $of ) || ! is_post_type_viewable( $of ) ) {
+		return null;
+	}
+	// parent=<path>: the children of one post of a hierarchical type (page?parent=services), as the Loop's parent.
+	foreach ( $tests as [ $name, $op, $want ] ) {
+		if ( 'parent' === $name && '=' === $op ) {
+			$parent               = get_page_by_path( $want, OBJECT, $of );
+			$posts['post_parent'] = $parent ? $parent->ID : -1;
+		}
+	}
+	$ids = get_posts( $posts + array( 'orderby' => array( 'menu_order' => 'ASC', 'title' => 'ASC' ), 'meta_query' => mcc_where_meta( $of, $tests ) ) );
+	return array( 'ids' => $ids, 'to' => $of, 'rest' => '' === $by ? '' : rtrim( "$by.$rest", '.' ) );
+}
+
+/**
+ * A count, sum, average, least or greatest over a set (mcc_set), as Django's aggregates:
+ *   count:work_order.account            the work orders whose account is the post (a post type and its relation)
+ *   sum:work_order.account.total        their totals: after the relation, any key on each (through relations too)
+ *   count:this.products                 the post's own related posts; sum:this.products.price
+ *   count:this.line_items               a repeating group's rows on the post; sum:this.line_items.quantity
+ *   count:city                          every post of a type; sum:product.price
+ * each with a where after a "?" (mcc_where): "count:work_order.account?status=New,Scheduled". A count is 0 and a sum
+ * 0 when there's nothing; an average, least or greatest empty. Empty too when the key names no relation, group or type.
+ */
+function mcc_aggregate( int $post_id, string $fn, string $arg ): string {
+	[ $path, $where ] = array_pad( explode( '?', $arg, 2 ), 2, '' );
+	$set              = mcc_set( $post_id, $path, mcc_where( $where ) );
+	if ( ! $set ) {
+		return '';
+	}
+	$rest = $set['rest'];
+	if ( isset( $set['rows'] ) ) {
+		$values = array();
+		foreach ( '' === $rest ? array() : $set['rows'] as $r ) {
+			$GLOBALS['mcc_rows'][] = array( 'fields' => $set['fields'], 'values' => $r );
+			$values[]              = mcc_value( $post_id, $rest, 'raw' );
+			array_pop( $GLOBALS['mcc_rows'] );
+		}
+		return mcc_reduce( $fn, count( $set['rows'] ), $values );
+	}
+	$ids = $set['ids'];
 	if ( '' !== $rest && $ids ) {
 		// The posts read below, in one query rather than one each (their fields too, when the key names one).
-		_prime_post_caches( $ids, false, isset( mcc_fields( $to )[ explode( '.', $rest, 2 )[0] ] ) );
+		_prime_post_caches( $ids, false, isset( mcc_fields( $set['to'] )[ explode( '.', $rest, 2 )[0] ] ) );
 	}
 	$values = '' === $rest ? array() : mcc_on_related( array( 'ids' => $ids ), fn( $id ) => mcc_value( $id, $rest, 'raw' ) );
 	return mcc_reduce( $fn, count( $ids ), $values );

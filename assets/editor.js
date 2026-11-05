@@ -207,7 +207,7 @@
 							},
 						} ),
 						el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 24, onChange: ( perPage ) => set( { perPage } ) } ),
-						el( TextControl, { label: 'Only posts where', help: 'Their fields: status=New,Scheduled (one of), status!=Cancelled, total>=1000, scheduled<today, products~12; several joined by &.', value: a.where, onChange: ( where ) => set( { where } ) } ),
+						el( TextControl, { label: 'Only posts where', help: 'Their fields: status=New,Scheduled (one of), status!=Cancelled, total>=1000, scheduled<today, products~12; several joined by &. Inside another Loop, its item\'s values: mcl_region={{ key }}.', value: a.where, onChange: ( where ) => set( { where } ) } ),
 						el( SelectControl, { label: 'Order by', value: a.orderBy, options: orders, onChange: ( orderBy ) => set( { orderBy } ) } ),
 						el( SelectControl, { label: 'Order', value: a.order, options: [ opt( 'Descending', 'desc' ), opt( 'Ascending', 'asc' ) ], onChange: ( order ) => set( { order } ) } ),
 						type.taxonomies.length > 0 && el( SelectControl, { label: 'Only from', value: a.taxonomy, options: [ opt( 'Any', '' ), ...type.taxonomies.map( ( x ) => opt( x.label, x.name ) ) ], onChange: ( taxonomy ) => set( { taxonomy } ) } ),

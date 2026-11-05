@@ -42,3 +42,18 @@ From the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo):
 - **Nested Loops cost a query per outer item.** One query per level, the children grouped by parent.
 - **A Loop's relations are guessed from its item's markup** (`mcc_prime_related()`): a relation's name in the text
   without being used costs one wasted query per Loop. Read the tokens instead, if it shows up.
+
+From comparing with Webflow's CMS (2026-11-04):
+
+- [ ] **SEO and social image from fields** — a type's SEO title, description and OG image as tokens
+      (`{{ title }} in {{ city }}`), handed to Rank Math. (found 2026-11-04)
+- [ ] **Curated Loop** — pick and order the items by hand (Webflow's curated lists: "featured products"). (found 2026-11-04)
+- [ ] **Previous / next item** on a post's page, in the Loop's order. (found 2026-11-04)
+- [ ] **CSV import and export of a type's posts or a group's rows** (Webflow's bulk CSV). (found 2026-11-04)
+- [ ] **Admin columns and filters** from a type's fields (Django's list_display / list_filter / search_fields). (found 2026-11-04)
+- [ ] **Item status: draft, scheduled, archived** for group rows (posts have it; rows don't). (found 2026-11-04)
+- [ ] **A front-end form that creates or edits a post of a type** (Django's ModelForm; Marccent forms save entries only). (found 2026-11-04)
+- [x] **An outer item's values in a Loop's where** (`state={{ code }}`): a nested Loop can only follow a relation field
+      today, so cities can't be listed under a state that is only a field on them. (found 2026-11-04)
+- [ ] **marccent-local's area directory as Loops** — it's PHP (`mcl_render_directory`, grouped by `mcl_region`), not
+      blocks; needs Group by or the item above. (found 2026-11-04)

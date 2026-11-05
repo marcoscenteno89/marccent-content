@@ -21,6 +21,11 @@
 
 $current = (int) ( $block->context['postId'] ?? 0 ) ?: ( is_singular() ? get_queried_object_id() : 0 );
 $n       = $GLOBALS['mcc_loop_n'] = ( $GLOBALS['mcc_loop_n'] ?? 0 ) + 1; // this Loop's number on the page
+// A where can read the item around it, an outer Loop's row or post: the cities of each region, mcl_region={{ key }}.
+// A token with nothing to fill it stays as it is, and matches nothing.
+if ( str_contains( (string) $attributes['where'], '{{' ) ) {
+	$attributes['where'] = mcc_fill( $attributes['where'], $current );
+}
 $visitor = mcc_loop_visitor( $attributes, $n );
 $total   = 0;
 $rows    = '' !== $attributes['source'] ? mcc_loop_rows( $attributes, $current, $visitor, $total ) : null;
@@ -42,19 +47,22 @@ if ( null === $rows ? ! $query->have_posts() : ! $rows ) {
 $inner  = $block->parsed_block['innerBlocks'];
 $cell   = count( $inner ) > 1;
 $markup = serialize_blocks( $inner ); // what the item reads: the relations to load up front
+$first  = ( $visitor['paged'] ? ( max( 1, (int) $visitor['page'] ) - 1 ) * $per : 0 ) + 1; // {{ loop:n }} of the first item
 
 if ( null !== $rows ) {
 	$fields  = mcc_groups()[ $attributes['source'] ]['fields'];
 	$context = array( 'postId' => $current, 'postType' => get_post_type( $current ), 'marccent/source' => $attributes['source'] );
 	$items   = '';
 	mcc_prime_related( $fields, $rows, $markup );
-	foreach ( $rows as $values ) {
-		$GLOBALS['mcc_rows'][] = array( 'fields' => $fields, 'values' => $values );
-		$html                  = '';
+	foreach ( $rows as $i => $values ) {
+		$GLOBALS['mcc_rows'][]     = array( 'fields' => $fields, 'values' => $values );
+		$GLOBALS['mcc_loop_pos'][] = $first + $i;
+		$html                      = '';
 		foreach ( $inner as $item ) {
 			$html .= ( new WP_Block( $item, $context ) )->render();
 		}
 		array_pop( $GLOBALS['mcc_rows'] );
+		array_pop( $GLOBALS['mcc_loop_pos'] );
 		$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 	}
 	echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
@@ -65,12 +73,14 @@ global $post;
 $outer = $post; // inside another Loop, its item: back to it after, not to the page's post
 $items = '';
 mcc_prime_related( mcc_fields( $query->posts[0]->post_type ), wp_list_pluck( $query->posts, 'ID' ), $markup );
-foreach ( $query->posts as $post ) { // phpcs:ignore WordPress.WP.GlobalVariablesOverride -- the loop's current post, reset below
+foreach ( $query->posts as $i => $post ) { // phpcs:ignore WordPress.WP.GlobalVariablesOverride -- the loop's current post, reset below
 	setup_postdata( $post );
+	$GLOBALS['mcc_loop_pos'][] = $first + $i;
 	$html = '';
 	foreach ( $inner as $item ) {
 		$html .= ( new WP_Block( $item, array( 'postId' => $post->ID, 'postType' => $post->post_type ) ) )->render();
 	}
+	array_pop( $GLOBALS['mcc_loop_pos'] );
 	$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 }
 $post = $outer; // phpcs:ignore WordPress.WP.GlobalVariablesOverride -- put back
