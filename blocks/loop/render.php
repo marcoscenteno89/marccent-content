@@ -24,7 +24,9 @@ $n       = $GLOBALS['mcc_loop_n'] = ( $GLOBALS['mcc_loop_n'] ?? 0 ) + 1; // this
 // A where can read the item around it, an outer Loop's row or post: the cities of each region, mcl_region={{ key }}.
 // A token with nothing to fill it stays as it is, and matches nothing.
 if ( str_contains( (string) $attributes['where'], '{{' ) ) {
-	$attributes['where'] = mcc_fill( $attributes['where'], $current );
+	$GLOBALS['mcc_no_visitor'] = true; // what a visitor typed ({{ search }}) never decides what a Loop lists
+	$attributes['where']       = mcc_fill( $attributes['where'], $current );
+	$GLOBALS['mcc_no_visitor'] = false;
 }
 $visitor = mcc_loop_visitor( $attributes, $n );
 $total   = 0;
@@ -47,7 +49,7 @@ if ( null === $rows ? ! $query->have_posts() : ! $rows ) {
 $inner  = $block->parsed_block['innerBlocks'];
 $cell   = count( $inner ) > 1;
 $markup = serialize_blocks( $inner ); // what the item reads: the relations to load up front
-$first  = ( $visitor['paged'] ? ( max( 1, (int) $visitor['page'] ) - 1 ) * $per : 0 ) + 1; // {{ loop:n }} of the first item
+$first  = ( $visitor['paged'] ? ( max( 1, (int) $visitor['page'] ) - 1 ) * $per : 0 ) + 1; // {{ loop:number }} of the first item
 
 if ( null !== $rows ) {
 	$fields  = mcc_groups()[ $attributes['source'] ]['fields'];
@@ -65,6 +67,7 @@ if ( null !== $rows ) {
 		array_pop( $GLOBALS['mcc_loop_pos'] );
 		$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 	}
+	mcc_schema_collect_rows( $attributes['source'], $rows, $current ); // the rows in the page's JSON-LD (inc/schema.php)
 	echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
 	return;
 }
@@ -83,6 +86,7 @@ foreach ( $query->posts as $i => $post ) { // phpcs:ignore WordPress.WP.GlobalVa
 	array_pop( $GLOBALS['mcc_loop_pos'] );
 	$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 }
+mcc_schema_collect_posts( $query->posts, $n ); // the posts in the page's JSON-LD (inc/schema.php)
 $post = $outer; // phpcs:ignore WordPress.WP.GlobalVariablesOverride -- put back
 if ( $post ) {
 	setup_postdata( $post );

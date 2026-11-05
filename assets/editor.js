@@ -207,7 +207,7 @@
 							},
 						} ),
 						el( RangeControl, { label: 'How many', value: a.perPage, min: 1, max: 24, onChange: ( perPage ) => set( { perPage } ) } ),
-						el( TextControl, { label: 'Only posts where', help: 'Their fields: status=New,Scheduled (one of), status!=Cancelled, total>=1000, scheduled<today, products~12; several joined by &. Inside another Loop, its item\'s values: mcl_region={{ key }}.', value: a.where, onChange: ( where ) => set( { where } ) } ),
+						el( TextControl, { label: 'Only posts where', help: 'Their fields: status=New,Scheduled (one of), status!=Cancelled, total>=1000, scheduled<today, products~12; several joined by &. Inside another Loop, its item\'s values: region={{ key }}.', value: a.where, onChange: ( where ) => set( { where } ) } ),
 						el( SelectControl, { label: 'Order by', value: a.orderBy, options: orders, onChange: ( orderBy ) => set( { orderBy } ) } ),
 						el( SelectControl, { label: 'Order', value: a.order, options: [ opt( 'Descending', 'desc' ), opt( 'Ascending', 'asc' ) ], onChange: ( order ) => set( { order } ) } ),
 						type.taxonomies.length > 0 && el( SelectControl, { label: 'Only from', value: a.taxonomy, options: [ opt( 'Any', '' ), ...type.taxonomies.map( ( x ) => opt( x.label, x.name ) ) ], onChange: ( taxonomy ) => set( { taxonomy } ) } ),
@@ -346,31 +346,33 @@
 
 	// A place: its address, and its latitude and longitude, found from the address (OpenStreetMap's search) or typed.
 	const LocationControl = ( { label, help, value, onChange } ) => {
-		const v = value && typeof value === 'object' && ! Array.isArray( value ) ? value : {};
+		const saved = value && typeof value === 'object' && ! Array.isArray( value ) ? value : {};
+		// Older saves have lat and lng.
+		const v = { address: saved.address ?? '', latitude: saved.latitude ?? saved.lat ?? '', longitude: saved.longitude ?? saved.lng ?? '' };
 		const [ busy, setBusy ] = useState( '' );
-		const put = ( patch ) => onChange( { address: '', lat: '', lng: '', ...v, ...patch } );
+		const put = ( patch ) => onChange( { ...v, ...patch } );
 		const find = () => {
 			setBusy( 'Looking…' );
 			window.fetch( `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${ encodeURIComponent( v.address || '' ) }` )
 				.then( ( r ) => r.json() )
 				.then( ( found ) => {
 					if ( ! found[ 0 ] ) return setBusy( 'No place found for that address.' );
-					put( { lat: Number( Number( found[ 0 ].lat ).toFixed( 6 ) ), lng: Number( Number( found[ 0 ].lon ).toFixed( 6 ) ) } );
+					put( { latitude: Number( Number( found[ 0 ].lat ).toFixed( 6 ) ), longitude: Number( Number( found[ 0 ].lon ).toFixed( 6 ) ) } );
 					setBusy( '' );
 				}, () => setBusy( 'Couldn’t reach the map search.' ) );
 		};
-		const has = v.lat !== '' && v.lat != null && v.lng !== '' && v.lng != null;
+		const has = v.latitude !== '' && v.latitude != null && v.longitude !== '' && v.longitude != null;
 		return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
 			caption( label ),
 			el( TextControl, { label: 'Address', value: v.address ?? '', onChange: ( address ) => put( { address } ) } ),
 			el( 'div', { style: { display: 'flex', gap: '8px' } },
-				el( TextControl, { label: 'Latitude', type: 'number', value: v.lat ?? '', onChange: ( lat ) => put( { lat: lat === '' ? '' : Number( lat ) } ) } ),
-				el( TextControl, { label: 'Longitude', type: 'number', value: v.lng ?? '', onChange: ( lng ) => put( { lng: lng === '' ? '' : Number( lng ) } ) } )
+				el( TextControl, { label: 'Latitude', type: 'number', value: v.latitude, onChange: ( latitude ) => put( { latitude: latitude === '' ? '' : Number( latitude ) } ) } ),
+				el( TextControl, { label: 'Longitude', type: 'number', value: v.longitude, onChange: ( longitude ) => put( { longitude: longitude === '' ? '' : Number( longitude ) } ) } )
 			),
 			el( Button, { variant: 'secondary', size: 'small', disabled: ! v.address, onClick: find }, 'Find it from the address' ),
 			busy && el( 'p', { className: 'components-base-control__help' }, busy ),
 			has && el( 'iframe', { title: 'Map', loading: 'lazy', style: { width: '100%', height: '180px', border: 0, marginTop: '8px' },
-				src: `https://www.openstreetmap.org/export/embed.html?bbox=${ v.lng - 0.01 },${ v.lat - 0.006 },${ v.lng + 0.01 },${ v.lat + 0.006 }&marker=${ v.lat },${ v.lng }` } ),
+				src: `https://www.openstreetmap.org/export/embed.html?bbox=${ v.longitude - 0.01 },${ v.latitude - 0.006 },${ v.longitude + 0.01 },${ v.latitude + 0.006 }&marker=${ v.latitude },${ v.longitude }` } ),
 			help && el( 'p', { className: 'components-base-control__help' }, help )
 		);
 	};
@@ -463,6 +465,23 @@
 	};
 	window.marccentContentUI = { FieldControl, GroupControl, opt, passes };
 	wp.plugins.registerPlugin( 'marccent-content-fields', { render: FieldsPanel } );
+
+	// A page's type for search engines (the page's JSON-LD, inc/schema.php): what kind of page it is.
+	const PAGE_TYPES = [ [ 'Web page (the default)', '' ], [ 'About: the business, who we are', 'AboutPage' ], [ 'Contact: how to reach us', 'ContactPage' ], [ 'Collection: a list of things (services, areas)', 'CollectionPage' ], [ 'Questions and answers', 'FAQPage' ], [ 'Checkout', 'CheckoutPage' ], [ 'One item (a product, a listing)', 'ItemPage' ] ];
+	const PageTypePanel = () => {
+		const postType = useSelect( ( select ) => select( 'core/editor' )?.getCurrentPostType(), [] );
+		const [ meta, setMeta ] = useEntityProp( 'postType', postType, 'meta' );
+		if ( postType !== 'page' || ! wp.editor?.PluginDocumentSettingPanel ) return null;
+		return el( wp.editor.PluginDocumentSettingPanel, { name: 'marccent-content-page-type', title: 'Page type' },
+			el( SelectControl, {
+				label: 'For search engines', value: meta?.page_type || '', __nextHasNoMarginBottom: true,
+				options: PAGE_TYPES.map( ( [ label, value ] ) => ( { label, value } ) ),
+				help: 'What kind of page this is, in the page’s structured data. Questions shown with a Loop are added either way.',
+				onChange: ( page_type ) => setMeta( { ...meta, page_type } ),
+			} )
+		);
+	};
+	wp.plugins.registerPlugin( 'marccent-content-page-type', { render: PageTypePanel } );
 
 	/* Show if, on every block */
 

@@ -55,5 +55,11 @@ From comparing with Webflow's CMS (2026-11-04):
 - [ ] **A front-end form that creates or edits a post of a type** (Django's ModelForm; Marccent forms save entries only). (found 2026-11-04)
 - [x] **An outer item's values in a Loop's where** (`state={{ code }}`): a nested Loop can only follow a relation field
       today, so cities can't be listed under a state that is only a field on them. (found 2026-11-04)
-- [ ] **marccent-local's area directory as Loops** — it's PHP (`mcl_render_directory`, grouped by `mcl_region`), not
+- [ ] **marccent-local's area directory as Loops** — it's PHP (`mcl_render_directory`, grouped by `region`), not
       blocks; needs Group by or the item above. (found 2026-11-04)
+- [ ] **A Schema box on Fields → Post types** (a type's `schema` is only in Fields → JSON today). (found 2026-11-05)
+- [ ] **A site group's schema** (options): the Organization from Site content's fields on a site without Marccent Local (its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
+- [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)
+- [ ] **A private field** (a flag on a field): never printed by tokens, the Field block, Loops or the JSON-LD, only edited in wp-admin (crm-sample's annual revenue). People who edit pages can print any published post's fields today. (found 2026-11-05)
+- [ ] **Sources that need the account owner to log in once** (OAuth: Facebook page recommendations, Instagram, Google Business Profile's every review): a Connect step per source. (found 2026-11-05)
+- [ ] **A Reviews field group and pattern** (name, rating, review, date, link, source; a Loop with the Rating stars block) for the Google reviews source, and rc-imp's Place ID and a Places server key to try it. No Review schema: a business's own reviews don't get stars. (found 2026-11-05)

@@ -20,6 +20,8 @@ require MCC_DIR . '/inc/types.php';    // the spec: post types, taxonomies and f
 require MCC_DIR . '/inc/values.php';   // a post's value by key: title, link, image, terms, a field…
 require MCC_DIR . '/inc/bindings.php'; // the values in blocks: the marccent/field binding source and {{ tokens }}
 require MCC_DIR . '/inc/blocks.php';   // the Loop and Field blocks, and the editor's fields panel
+require MCC_DIR . '/inc/schema.php';   // the page's JSON-LD: WordPress's own, and what the fields' schemas and the Loops add
+require MCC_DIR . '/inc/sources.php';  // Fields → Sources: another site's API pulled into the fields, by hand
 require MCC_DIR . '/inc/admin.php';    // Fields → Field groups, Post types, JSON; Site content; the export
 if ( is_admin() ) {
 	require MCC_DIR . '/inc/list-table.php'; // Fields → Field groups: the list, in WordPress's list table

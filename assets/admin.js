@@ -119,6 +119,7 @@
 		@media (max-width: 960px) { .mcc-editor { grid-template-columns: 1fr; } .mcc-side { position: static !important; } }
 		.mcc-side { position: sticky; top: 46px; display: grid; gap: 16px; }
 		.mcc-side .components-card { margin: 0 !important; }
+		.mcc-code textarea { font-family: Menlo, Consolas, monospace; font-size: 12px; }
 		.mcc-back { display: inline-flex; align-items: center; gap: 2px; text-decoration: none; margin-top: 8px; }
 		.mcc-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
 		.mcc-acc { border: 1px solid #dcdcde; border-radius: 4px; background: #fff; margin-bottom: 8px; }
@@ -234,6 +235,7 @@
 		const [ label, setLabel ] = useState( group.label || '' );
 		const [ key, setKey ] = useState( name );
 		const [ repeat, setRepeat ] = useState( !! group.repeat );
+		const [ schema, setSchema ] = useState( group.schema ? JSON.stringify( group.schema, null, 2 ) : '' );
 		// Where: per post type, off / all / some (slugs); and the site.
 		const initialWhere = () => {
 			const w = {};
@@ -272,6 +274,15 @@
 				...( site ? [ 'options' ] : [] ),
 			];
 			if ( ! on.length ) problems.push( 'Choose where the group goes.' );
+			let schemaValue = null;
+			if ( schema.trim() ) {
+				try {
+					schemaValue = JSON.parse( schema );
+					if ( ! schemaValue || typeof schemaValue !== 'object' || Array.isArray( schemaValue ) || ! schemaValue.type ) throw new Error();
+				} catch {
+					problems.push( 'Search engines: the schema isn’t valid JSON with a "type" (see the example under it).' );
+				}
+			}
 			if ( problems.length ) {
 				setTried( true );
 				setFields( fields.map( ( f, i ) => ( bad[ i ].length ? { ...f, open: true } : f ) ) ); // open the ones to fix
@@ -281,6 +292,7 @@
 			}
 			const out = { label: label.trim(), on, fields: {} };
 			if ( repeat ) out.repeat = true;
+			if ( schemaValue ) out.schema = schemaValue;
 			fields.forEach( ( f, i ) => {
 				const field = { label: f.label.trim(), type: f.type };
 				if ( f.help.trim() ) field.help = f.help.trim();
@@ -342,7 +354,18 @@
 							}
 						},
 					} ) ),
-					el( Button, { variant: 'secondary', icon: 'plus-alt2', onClick: addField, style: { marginTop: '4px' } }, 'Add field' )
+					el( Button, { variant: 'secondary', icon: 'plus-alt2', onClick: addField, style: { marginTop: '4px' } }, 'Add field' ),
+					// What the group is in schema.org's words: the page's JSON-LD (inc/schema.php).
+					el( Card, { style: { marginTop: '24px' } },
+						el( CardHeader, null, el( 'strong', null, 'Search engines (schema.org)' ) ),
+						el( CardBody, null, el( TextareaControl, {
+							label: 'Schema (JSON, optional)', value: schema, rows: schema ? 10 : 3, onChange: setSchema,
+							className: 'mcc-code',
+							help: repeat
+								? 'What its rows are, where a Loop shows them. A value is a field’s key, text with {{ tokens }}, or an object with its own "@type". e.g. { "type": "FAQPage", "id": "faq", "each": { "@type": "Question", "name": "question", "acceptedAnswer": { "@type": "Answer", "text": "answer" } } }'
+								: 'What a post with this group is: on its page, and wherever a Loop lists it. A value is a field’s key, text with {{ tokens }}, or an object with its own "@type". e.g. { "type": "City", "id": "place", "map": { "name": "{{ title }}, {{ state }}", "geo": { "@type": "GeoCoordinates", "latitude": "latitude", "longitude": "longitude" } } }',
+						} ) )
+					)
 				),
 				el( 'div', { className: 'mcc-side' },
 					el( Card, null,

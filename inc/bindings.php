@@ -9,7 +9,7 @@
  *   This is what reaches the Marccent blocks, which save their markup as it is (a card's heading "{{ title }}", a
  *   button's link "{{ link }}"): "{{ price | currency }}", "{{ image:medium }}", "{{ terms:project_service }}".
  *
- * - A loop inside text: {{ each:city }}{{ title }}{{ sep }}, {{ /sep }}{{ /each }} (mcc_each, below).
+ * - A loop inside text: {{ each:city }}{{ title }}{{ separator }}, {{ /separator }}{{ /each }} (mcc_each, below).
  *
  * The post is the loop's current one (the Loop block, an each), else the page's own; in a Loop of a group's rows, the
  * row's fields come first. Keys and formats: inc/values.php.
@@ -54,7 +54,7 @@ function mcc_context_post( $instance ): int {
 function mcc_token( string $inner ): ?array {
 	// A where after a "?" (count:work_order.account?status=New&total>100), its & and < saved as entities in the markup.
 	$inner = html_entity_decode( $inner, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
-	if ( preg_match( '/^\s*(each:|\/?(each|sep|else)\s*$)/', $inner ) ) {
+	if ( preg_match( '/^\s*(each:|\/?(each|separator|sep|else)\s*$)/', $inner ) ) {
 		return null; // an each's own tags (mcc_each), left as they are when one has no end, so it shows
 	}
 	return preg_match( '/^\s*([a-z0-9_:.\-]+(?:\?[^|{}]*)?(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
@@ -70,8 +70,9 @@ add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 // A block's markup with its tokens filled for a post: its {{ each: }} lists first (mcc_each), then the tokens left.
 function mcc_fill( string $html, int $post_id ): string {
 	$html = mcc_each( $html, $post_id );
-	// Without a post or a row, only a group's values (the site's: "office.phone") can be filled; other tokens stay.
-	$known = fn( $token ) => $token && ( $post_id || mcc_row() || str_contains( $token[0], '.' ) );
+	// Without a post or a row, only a group's values (the site's: "office.phone") and the global ones (now, site,
+	// search: inc/values.php) can be filled; other tokens stay.
+	$known = fn( $token ) => $token && ( $post_id || mcc_row() || str_contains( $token[0], '.' ) || in_array( explode( ':', $token[0] )[0], MCC_GLOBALS, true ) );
 
 	$uri  = array_merge( wp_kses_uri_attributes(), array( 'srcset' ) );
 	$tags = new WP_HTML_Tag_Processor( $html );
@@ -83,7 +84,7 @@ function mcc_fill( string $html, int $post_id ): string {
 			}
 			$value = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => '{{' . rawurldecode( $m[1] ) . '}}', $value );
 			// A token that starts the URL is a URL ({{ link }}, {{ website }}#contact); one inside it is a part of it,
-			// URL-encoded (…?mlat={{ lat }}). The whole URL is then escaped once, unless a token in it is left.
+			// URL-encoded (…?mlat={{ latitude }}). The whole URL is then escaped once, unless a token in it is left.
 			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known ) {
 				$token = mcc_token( $m[1][0] );
 				if ( ! $known( $token ) ) {
@@ -109,11 +110,11 @@ function mcc_fill( string $html, int $post_id ): string {
  * A loop inside any text: what's between {{ each:<set> }} and {{ /each }} once per item of the set, its tokens that
  * item's, as the Loop block does with blocks:
  *
- *   <p>We serve {{ each:city?mcl_region=eastern-idaho }}{{ title }}{{ sep }}, {{ /sep }}{{ /each }}.</p>
+ *   <p>We serve {{ each:city?region=eastern-idaho }}{{ title }}{{ separator }}, {{ /separator }}{{ /each }}.</p>
  *
  * The set is a path as count: and sum: take (mcc_set): every post of a type (city), the post's related posts
  * (this.nearby) or a repeating group's rows on it (this.photos), the posts pointing to it (work_order.account), each
- * with a where after a "?". {{ sep }}…{{ /sep }} goes between the items, not after the last; {{ else }} starts what
+ * with a where after a "?". {{ separator }}…{{ /separator }} goes between the items, not after the last; {{ else }} starts what
  * shows when there are none. They nest: an each inside an each goes over its item. At most 200 items.
  */
 function mcc_each( string $html, int $post_id ): string {
@@ -166,14 +167,14 @@ function mcc_each_list( string $arg, string $body, int $post_id ): string {
 	return $items ? implode( mcc_fill( $between, $post_id ), $items ) : mcc_fill( $none, $post_id );
 }
 
-// An each's body as its item, its separator ({{ sep }}…{{ /sep }}) and its {{ else }}: its own, not those of an each
+// An each's body as its item, its separator ({{ separator }}…{{ /separator }}) and its {{ else }}: its own, not those of an each
 // inside it.
 function mcc_each_parts( string $body ): array {
-	preg_match_all( '/\{\{\s*(each:[^{}]*?|\/each|else|sep|\/sep)\s*\}\}/', $body, $tags, PREG_SET_ORDER | PREG_OFFSET_CAPTURE );
+	preg_match_all( '/\{\{\s*(each:[^{}]*?|\/each|else|separator|\/separator|sep|\/sep)\s*\}\}/', $body, $tags, PREG_SET_ORDER | PREG_OFFSET_CAPTURE );
 	$depth = 0;
 	$found = array();
 	foreach ( $tags as $t ) {
-		$name = str_starts_with( $t[1][0], 'each:' ) ? 'each' : $t[1][0];
+		$name = str_starts_with( $t[1][0], 'each:' ) ? 'each' : str_replace( 'separator', 'sep', $t[1][0] ); // the short name, still read
 		if ( 'each' === $name || '/each' === $name ) {
 			$depth += 'each' === $name ? 1 : -1;
 		} elseif ( 0 === $depth && ! isset( $found[ $name ] ) ) {

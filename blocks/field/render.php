@@ -22,8 +22,15 @@ $link  = $attributes['link'] && $post_id ? get_permalink( $post_id ) : '';
 
 if ( 'image' === ( $field['type'] ?? ( 'image' === $name ? 'image' : '' ) ) ) {
 	// The image's own alt text: the featured image's, or an image field's.
-	$alt  = mcc_value( $post_id, $field ? "$name:alt" : 'image_alt' );
-	$html = sprintf( '<img src="%s" alt="%s" loading="lazy" decoding="async" class="w-100 round" style="display: block; height: auto; aspect-ratio: 4 / 3; object-fit: cover">', esc_url( $value ), esc_attr( $alt ?: mcc_value( $post_id, 'title' ) ) );
+	$alt   = mcc_value( $post_id, $field ? "$name:alt" : 'image_alt' ) ?: mcc_value( $post_id, 'title' );
+	$style = 'display: block; height: auto; aspect-ratio: 4 / 3; object-fit: cover';
+	// WordPress's own markup when the image is known (its width and height, so nothing jumps as it loads; srcset and
+	// sizes; lazy or first-priority as WordPress decides), else the URL.
+	$row = mcc_row();
+	$id  = ! $field ? (int) get_post_thumbnail_id( $post_id ) : absint( $row && isset( $row['fields'][ $name ] ) ? ( $row['values'][ $name ] ?? 0 ) : ( str_contains( $name, '.' ) ? 0 : get_post_meta( $post_id, $name, true ) ) );
+	$html = $id && wp_attachment_is_image( $id )
+		? wp_get_attachment_image( $id, explode( ':', $key, 2 )[1] ?? 'large', false, array( 'alt' => $alt, 'class' => 'w-100 round', 'style' => $style, 'decoding' => 'async' ) )
+		: sprintf( '<img src="%s" alt="%s" loading="lazy" decoding="async" class="w-100 round" style="%s">', esc_url( $value ), esc_attr( $alt ), $style );
 	$tag  = 'figure';
 } elseif ( 'relation' === ( $field['type'] ?? '' ) && ( $related = mcc_key_posts( $post_id, $key ) ) ) {
 	// The related posts, each linked to its page (several: comma-separated).

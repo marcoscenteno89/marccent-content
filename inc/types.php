@@ -15,7 +15,7 @@
  *     },
  *     "groups": {
  *       "project_details": { "label": "Project details", "on": [ "project" ], "fields": { "city": {}, "year": { "type": "number" } } },
- *       "office": { "label": "Office", "on": [ "options" ], "fields": { "phone": {}, "lat": { "type": "number" } } },
+ *       "office": { "label": "Office", "on": [ "options" ], "fields": { "phone": {}, "latitude": { "type": "number" } } },
  *       "photos": { "label": "Photos", "repeat": true, "on": [ "page:gallery" ],
  *         "fields": { "image": { "type": "image" }, "caption": {}, "service": { "type": "select", "options": [ "a", "b" ] } } }
  *     }
@@ -57,7 +57,7 @@ defined( 'ABSPATH' ) || exit;
 const MCC_FIELD_TYPES = array( 'string', 'text', 'html', 'number', 'url', 'email', 'date', 'boolean', 'color', 'image', 'file', 'gallery', 'location', 'select', 'relation' );
 
 // A post's own values (inc/values.php): a field on posts can't have one of these names.
-const MCC_RESERVED = array( 'title', 'excerpt', 'content', 'date', 'modified', 'link', 'id', 'author', 'type', 'image', 'image_alt', 'terms', 'count', 'sum', 'avg', 'min', 'max' );
+const MCC_RESERVED = array( 'title', 'excerpt', 'content', 'date', 'modified', 'link', 'id', 'author', 'type', 'image', 'image_alt', 'terms', 'count', 'sum', 'avg', 'min', 'max', 'average', 'minimum', 'maximum', 'loop', 'now', 'site', 'search' );
 
 function mcc_spec(): array {
 	if ( ! isset( $GLOBALS['mcc_cache']['spec'] ) ) {
@@ -126,7 +126,7 @@ function mcc_field_schema( array $f ): array {
 		return array( 'type' => 'array', 'items' => array( 'type' => 'integer' ) );
 	}
 	if ( 'location' === $f['type'] ) {
-		return array( 'type' => 'object', 'properties' => array( 'address' => array( 'type' => 'string' ), 'lat' => array( 'type' => array( 'number', 'string' ) ), 'lng' => array( 'type' => array( 'number', 'string' ) ) ), 'additionalProperties' => false );
+		return array( 'type' => 'object', 'properties' => array( 'address' => array( 'type' => 'string' ), 'latitude' => array( 'type' => array( 'number', 'string' ) ), 'longitude' => array( 'type' => array( 'number', 'string' ) ), 'lat' => array( 'type' => array( 'number', 'string' ) ), 'lng' => array( 'type' => array( 'number', 'string' ) ) ), 'additionalProperties' => false ); // lat, lng: older saves
 	}
 	return array( 'type' => mcc_meta_type( $f ) );
 }
@@ -194,7 +194,7 @@ function mcc_field_shown( array $f, array $values ): bool {
 // Whether a value counts as empty for a required field.
 function mcc_is_empty( $value, array $f ): bool {
 	if ( 'location' === $f['type'] ) {
-		return '' === trim( (string) ( ( (array) $value )['address'] ?? '' ) ) && '' === (string) ( ( (array) $value )['lat'] ?? '' );
+		return '' === trim( (string) ( ( (array) $value )['address'] ?? '' ) ) && '' === (string) ( ( (array) $value )['latitude'] ?? ( (array) $value )['lat'] ?? '' );
 	}
 	if ( 'boolean' === $f['type'] ) {
 		return ! $value;
@@ -563,7 +563,7 @@ function mcc_sanitize( $value, array $f ) {
 		case 'location':
 			$v   = (array) $value;
 			$num = fn( $n, $max ) => is_numeric( $n ) && abs( (float) $n ) <= $max ? round( (float) $n, 7 ) : '';
-			return array( 'address' => sanitize_text_field( (string) ( $v['address'] ?? '' ) ), 'lat' => $num( $v['lat'] ?? '', 90 ), 'lng' => $num( $v['lng'] ?? '', 180 ) );
+			return array( 'address' => sanitize_text_field( (string) ( $v['address'] ?? '' ) ), 'latitude' => $num( $v['latitude'] ?? $v['lat'] ?? '', 90 ), 'longitude' => $num( $v['longitude'] ?? $v['lng'] ?? '', 180 ) );
 		case 'color':
 			return (string) sanitize_hex_color( (string) $value );
 		case 'html':

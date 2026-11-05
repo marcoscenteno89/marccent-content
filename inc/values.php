@@ -9,14 +9,14 @@
  *   <image field>:alt: the image's alt text
  *   <file field>: its URL; <file field>:name its file name
  *   <gallery field>: its images' URLs, comma-separated (<field>:<size>); :count how many
- *   <location field>: its address; :lat, :lng, :map (a Google Maps link to it)
+ *   <location field>: its address; :latitude, :longitude, :map (a Google Maps link to it)
  *   <html field>: its text (the Field block shows it as HTML)
  *   <group>.<field>: a field of a group that doesn't repeat (the post's, else the site's): "office.phone"
  *   <relation>: the related post's title (several: comma-separated)
  *   <relation>.<key>: any of these keys of the related post, followed as far as it goes ("work_order.account.title");
  *   of several related posts, each one's, comma-separated ("products.title")
  *
- *   count:<what>, sum:<what>.<key>, avg:…, min:…, max:… over related posts, rows or a type's posts, with an optional
+ *   count:<what>, sum:<what>.<key>, average:…, minimum:…, maximum:… (or avg, min, max) over related posts, rows or a type's posts, with an optional
  *   where after a "?" (mcc_aggregate): "count:work_order.account?status=New", "sum:this.line_items.quantity", "count:city"
  *
  * Inside a Loop of a group's rows, the row's fields come first: "caption", "image:medium".
@@ -145,12 +145,66 @@ function mcc_key_posts( int $post_id, string $key ): ?array {
 	return post_password_required( $post_id ) ? array() : mcc_related_ids( mcc_meta( $post_id, $name, $f ), $f );
 }
 
+/**
+ * The global values, the same anywhere (a page, the footer, a 404), from a fixed list of public ones, never any
+ * setting by name:
+ *   now:year, now:month, now:day, now:weekday, now:date   today (the site's time zone; a cached page keeps its day)
+ *   site:name, site:tagline, site:url, site:logo          the site
+ *   author:name, author:bio, author:link, author:image    the post's author (on an author's page, theirs): what their
+ *                                                         public page shows, never their email or login
+ *   search                                                what the visitor searched for: shown as text only, never
+ *                                                         read in a where or a Show if ($GLOBALS['mcc_no_visitor'])
+ * Null for anything else, so a post's own values are read as before.
+ */
+const MCC_GLOBALS = array( 'now', 'site', 'search' );
+
+function mcc_global_value( string $name, string $arg, int $post_id ): ?string {
+	$text = fn( $s ) => html_entity_decode( (string) $s, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+	switch ( $name ) {
+		case 'now':
+			$formats = array( 'year' => 'Y', 'month' => 'F', 'day' => 'j', 'weekday' => 'l', 'date' => get_option( 'date_format' ) );
+			return isset( $formats[ $arg ] ) ? wp_date( $formats[ $arg ] ) : '';
+		case 'site':
+			$logo = get_theme_mod( 'custom_logo' );
+			$site = array(
+				'name'    => $text( get_bloginfo( 'name' ) ),
+				'tagline' => $text( get_bloginfo( 'description' ) ),
+				'url'     => home_url( '/' ),
+				'logo'    => $logo ? (string) wp_get_attachment_image_url( $logo, 'full' ) : (string) get_site_icon_url( 512 ),
+			);
+			return $site[ $arg ] ?? '';
+		case 'author':
+			if ( '' === $arg ) {
+				return null; // {{ author }}: the post's, read with its other values
+			}
+			$post = $post_id ? get_post( $post_id ) : null;
+			$user = $post ? (int) $post->post_author : ( is_author() ? get_queried_object_id() : 0 );
+			if ( ! $user ) {
+				return '';
+			}
+			$author = array(
+				'name'  => (string) get_the_author_meta( 'display_name', $user ),
+				'bio'   => (string) get_the_author_meta( 'description', $user ),
+				'link'  => get_author_posts_url( $user ),
+				'image' => (string) get_avatar_url( $user, array( 'size' => 256 ) ),
+			);
+			return $author[ $arg ] ?? '';
+		case 'search':
+			return '' === $arg && empty( $GLOBALS['mcc_no_visitor'] ) ? get_search_query( false ) : '';
+	}
+	return null;
+}
+
 function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	[ $name, $arg ] = array_pad( explode( ':', $key, 2 ), 2, '' );
 
-	// {{ loop:n }}: the item's place in its Loop, 1 for the first (on later pages, counting on): numbered steps.
-	if ( 'loop' === $name && 'n' === $arg ) {
+	// {{ loop:number }}: the item's place in its Loop, 1 for the first (on later pages, counting on): numbered steps.
+	if ( 'loop' === $name && 'number' === $arg ) {
 		return empty( $GLOBALS['mcc_loop_pos'] ) ? '' : (string) end( $GLOBALS['mcc_loop_pos'] );
+	}
+	$global = mcc_global_value( $name, $arg, $post_id );
+	if ( null !== $global ) {
+		return mcc_format( $global, $format );
 	}
 
 	// A relation followed: the rest of the key on the related post (each one's, when there are several).
@@ -238,7 +292,7 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	return mcc_format( $value, $format );
 }
 
-const MCC_AGGREGATES = array( 'count', 'sum', 'avg', 'min', 'max' );
+const MCC_AGGREGATES = array( 'count', 'sum', 'average', 'minimum', 'maximum', 'avg', 'min', 'max' ); // the last three: the short names, still read
 
 /**
  * The set a path names, seen from a post: what count:, sum:… (mcc_aggregate) and {{ each: }} (inc/bindings.php) go
@@ -350,7 +404,8 @@ function mcc_reduce( string $fn, int $count, array $values ): string {
 	if ( ! $numbers ) {
 		return 'sum' === $fn ? '0' : '';
 	}
-	$out = array( 'sum' => fn() => array_sum( $numbers ), 'avg' => fn() => array_sum( $numbers ) / count( $numbers ), 'min' => fn() => min( $numbers ), 'max' => fn() => max( $numbers ) )[ $fn ]();
+	$fn  = array( 'avg' => 'average', 'min' => 'minimum', 'max' => 'maximum' )[ $fn ] ?? $fn;
+	$out = array( 'sum' => fn() => array_sum( $numbers ), 'average' => fn() => array_sum( $numbers ) / count( $numbers ), 'minimum' => fn() => min( $numbers ), 'maximum' => fn() => max( $numbers ) )[ $fn ]();
 	return (string) round( $out, 6 );
 }
 
@@ -379,11 +434,18 @@ function mcc_display_value( $raw, array $field, string $size = '' ): string {
 	}
 	if ( 'location' === $field['type'] ) {
 		$l = (array) $raw;
+		// Older saves have lat and lng: read as latitude and longitude, and :lat and :lng still ask for them.
+		$l = array(
+			'address'   => (string) ( $l['address'] ?? '' ),
+			'latitude'  => (string) ( $l['latitude'] ?? $l['lat'] ?? '' ),
+			'longitude' => (string) ( $l['longitude'] ?? $l['lng'] ?? '' ),
+		);
+		$size = array( 'lat' => 'latitude', 'lng' => 'longitude' )[ $size ] ?? $size;
 		if ( 'map' === $size ) {
-			$q = '' !== (string) ( $l['lat'] ?? '' ) ? $l['lat'] . ',' . $l['lng'] : (string) ( $l['address'] ?? '' );
+			$q = '' !== $l['latitude'] ? $l['latitude'] . ',' . $l['longitude'] : $l['address'];
 			return '' !== $q ? 'https://www.google.com/maps/search/?api=1&query=' . rawurlencode( $q ) : '';
 		}
-		return (string) ( $l[ in_array( $size, array( 'lat', 'lng' ), true ) ? $size : 'address' ] ?? '' );
+		return $l[ in_array( $size, array( 'latitude', 'longitude' ), true ) ? $size : 'address' ];
 	}
 	if ( is_array( $raw ) || is_object( $raw ) ) {
 		return '';
@@ -448,10 +510,12 @@ function mcc_show_if( string $where, int $post_id ): bool {
 		return true;
 	}
 	$values = array();
+	$GLOBALS['mcc_no_visitor'] = true; // what a visitor typed doesn't decide what shows
 	foreach ( $tests as [ $key ] ) {
 		$value          = mcc_value( $post_id, $key, 'raw' );
 		$values[ $key ] = 'boolean' === ( mcc_field_def( $post_id, $key )['type'] ?? '' ) ? ( __( 'Yes', 'marccent-content' ) === $value ? '1' : '' ) : $value;
 	}
+	$GLOBALS['mcc_no_visitor'] = false;
 	$yes = fn( $want ) => in_array( strtolower( $want ), array( 'yes', 'true', 'on' ), true ) ? '1' : ( in_array( strtolower( $want ), array( 'no', 'false', 'off' ), true ) ? '' : $want );
 	return mcc_where_row( $values, array_map( fn( $t ) => array( $t[0], $t[1], $yes( $t[2] ) ), $tests ) );
 }
