@@ -22,14 +22,18 @@
  *   }
  *
  * A type with "noindex": true keeps its posts out of search results (robots noindex on each one's page), for types
- * that exist to be shown in loops rather than read on their own.
+ * that exist to be shown in loops rather than read on their own. A type with "private": true is only in wp-admin: no
+ * pages, no archive, not in search or menus (a form's entries, notes kept for the team).
  *
  * Field groups, as ACF's: a named set of fields put "on" post types ("page"), on some pages only ("page:contact", by
  * slug), on those with a template ("page@landing"), on a taxonomy's terms ("term:category"), on users ("user") or on
  * the site ("options": the Site content screen). Field types: string, text (several lines), html (rich text: links,
  * bold, lists), number, url, email, date, boolean, color, image (an attachment), file (any attachment: a PDF…),
  * gallery (several images, in an order), location (an address with its latitude and longitude), select (with
- * "options": [ "a", "b" ]), relation (another post: "to" its post type; "multiple": true for several).
+ * "options": [ "a", "b" ]), relation (another post: "to" its post type; "multiple": true for several), json (any
+ * data as names and values, a form's answers or an API's item: one field, its values read as {{ data:email }}), hours
+ (opening hours: Monday to Sunday, read as the week, today or open now; "closed_days": a repeating group of the days
+ that differ, inc/hours.php).
  *
  * A field may have a help line, a prefix and a suffix (shown around its value), and:
  * - "required": true: a post isn't published without it (drafts may leave it empty), nor the site content saved;
@@ -54,7 +58,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-const MCC_FIELD_TYPES = array( 'string', 'text', 'html', 'number', 'url', 'email', 'date', 'boolean', 'color', 'image', 'file', 'gallery', 'location', 'select', 'relation' );
+const MCC_FIELD_TYPES = array( 'string', 'text', 'html', 'number', 'url', 'email', 'date', 'boolean', 'color', 'image', 'file', 'gallery', 'location', 'select', 'relation', 'json', 'hours' );
 
 // A post's own values (inc/values.php): a field on posts can't have one of these names.
 const MCC_RESERVED = array( 'title', 'excerpt', 'content', 'date', 'modified', 'link', 'id', 'author', 'type', 'image', 'image_alt', 'terms', 'count', 'sum', 'avg', 'min', 'max', 'average', 'minimum', 'maximum', 'loop', 'now', 'site', 'search' );
@@ -117,13 +121,16 @@ function mcc_is_many( array $f ): bool {
 
 // A field's meta type: an image, a file or a related post is its id; a gallery a list of ids; a location an object.
 function mcc_meta_type( array $f ): string {
-	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'file' => 'integer', 'relation' => 'integer', 'gallery' => 'array', 'location' => 'object' )[ $f['type'] ] ?? 'string';
+	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'file' => 'integer', 'relation' => 'integer', 'gallery' => 'array', 'location' => 'object', 'hours' => 'object' )[ $f['type'] ] ?? 'string';
 }
 
 // A field's REST schema (one meta value, or one value in a row).
 function mcc_field_schema( array $f ): array {
 	if ( mcc_is_many( $f ) || 'gallery' === $f['type'] ) {
 		return array( 'type' => 'array', 'items' => array( 'type' => 'integer' ) );
+	}
+	if ( 'hours' === $f['type'] ) {
+		return array( 'type' => 'object', 'properties' => array_fill_keys( MCC_DAYS, array( 'type' => 'string' ) ), 'additionalProperties' => false );
 	}
 	if ( 'location' === $f['type'] ) {
 		return array( 'type' => 'object', 'properties' => array( 'address' => array( 'type' => 'string' ), 'latitude' => array( 'type' => array( 'number', 'string' ) ), 'longitude' => array( 'type' => array( 'number', 'string' ) ), 'lat' => array( 'type' => array( 'number', 'string' ) ), 'lng' => array( 'type' => array( 'number', 'string' ) ) ), 'additionalProperties' => false ); // lat, lng: older saves
@@ -453,21 +460,27 @@ function mcc_register_types(): void {
 	foreach ( mcc_spec()['types'] as $name => $t ) {
 		$label    = $t['label'] ?? ucfirst( $name ) . 's';
 		$singular = $t['singular'] ?? ucfirst( $name );
+		$private  = ! empty( $t['private'] );
 		register_post_type( $name, array(
-			'labels'       => array(
+			'labels'              => array(
 				'name'          => $label,
 				'singular_name' => $singular,
 				'add_new_item'  => sprintf( __( 'Add %s', 'marccent-content' ), $singular ),
 				'edit_item'     => sprintf( __( 'Edit %s', 'marccent-content' ), $singular ),
 				'all_items'     => sprintf( __( 'All %s', 'marccent-content' ), $label ),
 			),
-			'public'       => $t['public'] ?? true,
-			'has_archive'  => $t['archive'] ?? true,
-			'rewrite'      => array( 'slug' => $t['slug'] ?? $name, 'with_front' => false ),
-			'menu_icon'    => $t['icon'] ?? 'dashicons-admin-post',
-			'show_in_rest' => true,
+			'public'              => ! $private && ( $t['public'] ?? true ),
+			'show_ui'             => true,
+			'publicly_queryable'  => ! $private,
+			'exclude_from_search' => $private,
+			'show_in_nav_menus'   => ! $private,
+			'has_archive'         => ! $private && ( $t['archive'] ?? true ),
+			'rewrite'             => $private ? false : array( 'slug' => $t['slug'] ?? $name, 'with_front' => false ),
+			'query_var'           => ! $private,
+			'menu_icon'           => $t['icon'] ?? 'dashicons-admin-post',
+			'show_in_rest'        => true,
 			// custom-fields: the fields are in the REST API (the editor's fields panel saves through it).
-			'supports'     => array_values( array_unique( array_merge( $t['supports'] ?? array( 'title', 'editor', 'thumbnail', 'excerpt' ), array( 'custom-fields' ) ) ) ),
+			'supports'            => array_values( array_unique( array_merge( $t['supports'] ?? array( 'title', 'editor', 'thumbnail', 'excerpt' ), array( 'custom-fields' ) ) ) ),
 		) );
 		foreach ( $t['taxonomies'] ?? array() as $tax => $x ) {
 			register_taxonomy( $tax, $name, array(
@@ -485,7 +498,7 @@ function mcc_register_types(): void {
 			register_post_meta( $post_type, $name, array(
 				'type'              => mcc_meta_type( $f ),
 				'single'            => ! mcc_is_many( $f ), // several related posts: a meta row each
-				'show_in_rest'      => in_array( $f['type'], array( 'gallery', 'location' ), true ) ? array( 'schema' => mcc_field_schema( $f ) ) : true,
+				'show_in_rest'      => in_array( $f['type'], array( 'gallery', 'location', 'hours' ), true ) ? array( 'schema' => mcc_field_schema( $f ) ) : true,
 				'label'             => $f['label'],
 				'sanitize_callback' => fn( $value ) => mcc_sanitize( $value, $f ),
 				'auth_callback'     => fn( $allowed, $key, $post_id ) => current_user_can( 'edit_post', $post_id ),
@@ -582,9 +595,39 @@ function mcc_sanitize( $value, array $f ) {
 			return sanitize_textarea_field( (string) $value );
 		case 'select':
 			return in_array( $value, $f['options'] ?? array(), true ) ? $value : '';
+		case 'json':
+			return mcc_json_text( $value );
+		case 'hours':
+			return mcc_hours_sanitize( $value );
 		default:
 			return sanitize_text_field( (string) $value );
 	}
+}
+
+// A json field's value as saved: JSON text, every name and text in it plain text; '' for nothing or for what isn't
+// JSON. Given as JSON text or as the data itself (an array, from code).
+function mcc_json_text( $value ): string {
+	$data = is_string( $value ) ? json_decode( wp_unslash( $value ), true ) : json_decode( (string) wp_json_encode( $value ), true );
+	if ( null === $data || ( is_array( $data ) && ! $data ) ) {
+		return '';
+	}
+	return (string) wp_json_encode( mcc_json_clean( $data ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+}
+
+// JSON data with its names and texts cleaned (plain text, as a text field's); numbers, yes / no and empty kept. At most
+// ten levels deep.
+function mcc_json_clean( $data, int $depth = 0 ) {
+	if ( is_array( $data ) ) {
+		if ( $depth >= 10 ) {
+			return array();
+		}
+		$out = array();
+		foreach ( $data as $key => $value ) {
+			$out[ is_int( $key ) ? $key : sanitize_text_field( (string) $key ) ] = mcc_json_clean( $value, $depth + 1 );
+		}
+		return $out;
+	}
+	return is_string( $data ) ? sanitize_textarea_field( $data ) : $data;
 }
 
 /*

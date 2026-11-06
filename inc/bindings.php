@@ -60,6 +60,11 @@ function mcc_token( string $inner ): ?array {
 	return preg_match( '/^\s*([a-z0-9_:.\-]+(?:\?[^|{}]*)?(?:\s*\|\s*[a-z0-9_:\-]+)?)\s*$/i', $inner, $t ) ? mcc_parse_key( $t[1] ) : null;
 }
 
+// A Marccent block's setting with tokens (the Map's latitude: {{ business.latitude }}), filled as plain text.
+add_filter( 'marccent_blocks_fill', function ( string $text, $block = null ) {
+	return trim( html_entity_decode( wp_strip_all_tags( mcc_fill( $text, $block instanceof WP_Block ? mcc_context_post( $block ) : (int) get_the_ID() ) ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ) );
+}, 10, 2 );
+
 add_filter( 'render_block', function ( $html, $block, $instance = null ) {
 	if ( ! $html || ( ! str_contains( $html, '{{' ) && false === stripos( $html, '%7B%7B' ) ) ) {
 		return $html;
@@ -84,15 +89,17 @@ function mcc_fill( string $html, int $post_id ): string {
 			}
 			$value = preg_replace_callback( '/%7B%7B(.*?)%7D%7D/i', fn( $m ) => '{{' . rawurldecode( $m[1] ) . '}}', $value );
 			// A token that starts the URL is a URL ({{ link }}, {{ website }}#contact); one inside it is a part of it,
-			// URL-encoded (…?mlat={{ latitude }}). The whole URL is then escaped once, unless a token in it is left.
-			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known ) {
+			// URL-encoded (…?mlat={{ latitude }}). Right after tel:, mailto: or sms: it's the address itself, as it is
+			// (tel:{{ business.telephone }}: +1-208…). The whole URL is then escaped once, unless a token in it is left.
+			$value = trim( $value );
+			$value = preg_replace_callback( '/\{\{(.*?)\}\}/', function ( $m ) use ( $post_id, $known, $value ) {
 				$token = mcc_token( $m[1][0] );
 				if ( ! $known( $token ) ) {
 					return $m[0][0];
 				}
 				$v = mcc_value( $post_id, ...$token );
-				return 0 === $m[0][1] ? $v : rawurlencode( $v );
-			}, trim( $value ), -1, $count, PREG_OFFSET_CAPTURE );
+				return 0 === $m[0][1] || preg_match( '/^(tel|mailto|sms):$/i', substr( $value, 0, $m[0][1] ) ) ? $v : rawurlencode( $v );
+			}, $value, -1, $count, PREG_OFFSET_CAPTURE );
 			$value = str_contains( $value, '{{' ) ? $value : esc_url_raw( $value );
 			$tags->set_attribute( $name, $value );
 		}
@@ -110,12 +117,13 @@ function mcc_fill( string $html, int $post_id ): string {
  * A loop inside any text: what's between {{ each:<set> }} and {{ /each }} once per item of the set, its tokens that
  * item's, as the Loop block does with blocks:
  *
- *   <p>We serve {{ each:city?region=eastern-idaho }}{{ title }}{{ separator }}, {{ /separator }}{{ /each }}.</p>
+ *   <p>We serve {{ each:city?region=eastern-idaho | separator=", " }}{{ title }}{{ /each }}.</p>
  *
  * The set is a path as count: and sum: take (mcc_set): every post of a type (city), the post's related posts
  * (this.nearby) or a repeating group's rows on it (this.photos), the posts pointing to it (work_order.account), each
- * with a where after a "?". {{ separator }}…{{ /separator }} goes between the items, not after the last; {{ else }} starts what
- * shows when there are none. They nest: an each inside an each goes over its item. At most 200 items.
+ * with a where after a "?". | separator=", " puts that text between the items, not after the last; for a separator
+ * with HTML in it, {{ separator }}…{{ /separator }} inside the each does the same. {{ else }} starts what shows when
+ * there are none. They nest: an each inside an each goes over its item. At most 200 items.
  */
 function mcc_each( string $html, int $post_id ): string {
 	$out = '';
@@ -145,8 +153,16 @@ function mcc_each( string $html, int $post_id ): string {
 
 // One {{ each: }}: its items, filled, with its separator between them; or its {{ else }} when there are none.
 function mcc_each_list( string $arg, string $body, int $post_id ): string {
-	[ $path, $where ]          = array_pad( explode( '?', html_entity_decode( $arg, ENT_QUOTES | ENT_HTML5, 'UTF-8' ), 2 ), 2, '' );
+	$arg = html_entity_decode( $arg, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+	// | separator=", ": plain text between the items (escaped; HTML goes in a {{ separator }} tag).
+	$text = '';
+	if ( preg_match( '/\|\s*separator\s*=\s*(["\'])(.*?)\1\s*$/s', $arg, $m, PREG_OFFSET_CAPTURE ) ) {
+		$text = esc_html( $m[2][0] );
+		$arg  = substr( $arg, 0, $m[0][1] );
+	}
+	[ $path, $where ]          = array_pad( explode( '?', $arg, 2 ), 2, '' );
 	[ $item, $between, $none ] = mcc_each_parts( $body );
+	$between                   = '' !== $between ? $between : $text;
 	$set                       = mcc_set( $post_id, trim( $path ), mcc_where( $where ) );
 	$items                     = array();
 	if ( $set && '' === $set['rest'] && isset( $set['rows'] ) ) {

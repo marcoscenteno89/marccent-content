@@ -294,6 +294,8 @@
 			case 'file': return el( MediaControl, { ...common, value, onChange, kind: 'file' } );
 			case 'gallery': return el( GalleryControl, { ...common, value, onChange } );
 			case 'location': return el( LocationControl, { ...common, value, onChange } );
+			case 'json': return el( JsonControl, { ...common, value, onChange } );
+			case 'hours': return el( HoursControl, { ...common, value, onChange } );
 			case 'number': return el( TextControl, { ...common, type: 'number', value: value ?? '', onChange: ( v ) => onChange( v === '' ? 0 : Number( v ) ) } );
 			case 'boolean': return el( ToggleControl, { ...common, checked: !! value, onChange } );
 			case 'date': return el( TextControl, { ...common, type: 'date', value: value ?? '', onChange } );
@@ -304,6 +306,54 @@
 			case 'relation': return el( RelationControl, { ...common, f, value, onChange } );
 			default: return el( TextControl, { ...common, value: value ?? '', onChange } );
 		}
+	};
+
+	// Opening hours: a box per day ("08:00-17:00", or two spans "08:00-12:00, 13:00-17:00"; empty: closed).
+	const DAYS = [ 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday' ];
+	const HoursControl = ( { label, help, value, onChange } ) => el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
+		caption( label ),
+		DAYS.map( ( day ) => el( TextControl, {
+			key: day, label: day.charAt( 0 ).toUpperCase() + day.slice( 1 ), placeholder: 'Closed', value: ( value || {} )[ day ] ?? '',
+			onChange: ( v ) => onChange( { ...Object.fromEntries( DAYS.map( ( d ) => [ d, ( value || {} )[ d ] ?? '' ] ) ), [ day ]: v } ),
+		} ) ),
+		el( 'p', { className: 'components-base-control__help' }, help || '08:00-17:00, or two spans: 08:00-12:00, 13:00-17:00. Empty: closed.' )
+	);
+
+	// Data as names and values (a form's answers, an API's item): typed as JSON, checked as it's typed, and shown as a
+	// table of its names and values. Saved only when it's JSON.
+	const JsonControl = ( { label, help, value, onChange } ) => {
+		const pretty = ( v ) => {
+			try {
+				return v ? JSON.stringify( JSON.parse( v ), null, 2 ) : '';
+			} catch ( e ) {
+				return v;
+			}
+		};
+		const [ text, setText ] = useState( () => pretty( value ) );
+		const [ error, setError ] = useState( '' );
+		let data = null;
+		try {
+			data = value ? JSON.parse( value ) : null;
+		} catch ( e ) {}
+		const show = ( v ) => ( v && typeof v === 'object' ? ( Array.isArray( v ) ? v.map( show ).join( ', ' ) : JSON.stringify( v ) ) : String( v ?? '' ) );
+		return el( 'div', { className: 'components-base-control', style: { marginBottom: '16px' } },
+			el( TextareaControl, {
+				label, help: error || help || 'JSON: { "name": "Ana", "email": "ana@example.com" }', rows: 6, value: text, className: 'code', spellCheck: false,
+				onChange: ( v ) => {
+					setText( v );
+					try {
+						onChange( v.trim() ? JSON.stringify( JSON.parse( v ) ) : '' );
+						setError( '' );
+					} catch ( e ) {
+						setError( 'Not JSON yet: it’s saved once it is.' );
+					}
+				},
+			} ),
+			data && typeof data === 'object' && ! Array.isArray( data ) && el( 'table', { className: 'widefat striped', style: { marginTop: '4px' } },
+				el( 'tbody', null, Object.entries( data ).map( ( [ k, v ] ) => el( 'tr', { key: k },
+					el( 'th', { scope: 'row', style: { width: '40%' } }, k ),
+					el( 'td', null, show( v ) ) ) ) ) )
+		);
 	};
 
 	const caption = ( label ) => el( 'p', { style: { fontWeight: 500, fontSize: '11px', textTransform: 'uppercase', margin: '0 0 8px' } }, label );

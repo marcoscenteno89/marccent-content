@@ -85,10 +85,14 @@ function mcc_schema_post_mapping( WP_Post $post ): array {
  * list, or the text itself. Numbers stay numbers.
  */
 function mcc_schema_value( $spec, int $post_id ) {
+	if ( is_array( $spec ) && isset( $spec['@each'] ) ) {
+		return mcc_schema_each( $spec, $post_id );
+	}
 	if ( is_array( $spec ) ) {
 		$out = array();
 		foreach ( $spec as $key => $value ) {
-			$out[ $key ] = is_string( $key ) && str_starts_with( $key, '@' ) ? $value : mcc_schema_value( $value, $post_id );
+			// "@type" and the like as written; an "@id" with tokens filled ("{{ link }}#place").
+			$out[ $key ] = is_string( $key ) && str_starts_with( $key, '@' ) ? ( '@id' === $key && is_string( $value ) && str_contains( $value, '{{' ) ? mcc_schema_value( $value, $post_id ) : $value ) : mcc_schema_value( $value, $post_id );
 		}
 		return $out;
 	}
@@ -101,11 +105,85 @@ function mcc_schema_value( $spec, int $post_id ) {
 		return preg_match( '/[\p{L}\p{N}]/u', $text ) ? $text : '';
 	}
 	$field = mcc_field_def( $post_id, $spec );
+	// Opening hours: the week's openingHoursSpecification; "hours:special", its days that differ.
+	if ( 'hours' === ( $field['type'] ?? '' ) ) {
+		return str_ends_with( $spec, ':special' ) ? mcc_hours_special_schema( $field ) : mcc_hours_schema( mcc_schema_raw( $post_id, explode( ':', $spec )[0] ) );
+	}
 	if ( $field || in_array( explode( ':', $spec )[0], MCC_RESERVED, true ) ) {
 		$value = html_entity_decode( mcc_value( $post_id, $spec, 'raw' ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 		return 'number' === ( $field['type'] ?? '' ) && is_numeric( $value ) ? 0 + $value : $value;
 	}
 	return $spec;
+}
+
+// A field's saved value as it is, where a mapping reads it: the row's, a site group's ("business.hours") or the post's.
+function mcc_schema_raw( int $post_id, string $name ) {
+	$row = mcc_row();
+	if ( $row && array_key_exists( $name, $row['fields'] ) ) {
+		return $row['values'][ $name ] ?? null;
+	}
+	if ( str_contains( $name, '.' ) ) {
+		[ $group, $sub ] = explode( '.', $name, 2 );
+		return mcc_group_value( $group, $post_id )[ $sub ] ?? null;
+	}
+	return $post_id ? get_post_meta( $post_id, $name, true ) : null;
+}
+
+/**
+ * A list in a mapping, one item per row or post: { "@each": "<set>", …the item's mapping } with the set as
+ * {{ each: }} takes it (mcc_set: services, the site's rows; city, every City; this.nearby; with a where after a
+ * "?"). Each item's values are its row's or its post's.
+ *   "hasOfferCatalog": { "@type": "OfferCatalog", "itemListElement": { "@each": "services", "@type": "Offer",
+ *     "itemOffered": { "@type": "Service", "name": "name", "serviceType": "type" } } }
+ *   "areaServed": { "@each": "city", "@id": "{{ link }}#place" }
+ *   "sameAs": { "@each": "profiles", "@value": "link" }        a list of values, not objects
+ */
+function mcc_schema_each( array $spec, int $post_id ): array {
+	[ $path, $where ] = array_pad( explode( '?', (string) $spec['@each'], 2 ), 2, '' );
+	unset( $spec['@each'] );
+	// "@value": a list of plain values, not of objects ("sameAs": { "@each": "profiles", "@value": "link" }).
+	$spec = isset( $spec['@value'] ) ? $spec['@value'] : $spec;
+	$set = mcc_set( $post_id, trim( $path ), mcc_where( $where ) );
+	$out = array();
+	if ( $set && '' === $set['rest'] && isset( $set['rows'] ) ) {
+		foreach ( $set['rows'] as $row ) {
+			$GLOBALS['mcc_rows'][] = array( 'fields' => $set['fields'], 'values' => $row );
+			$out[]                 = mcc_schema_value( $spec, $post_id );
+			array_pop( $GLOBALS['mcc_rows'] );
+		}
+	} elseif ( $set && '' === $set['rest'] ) {
+		// A post's own values, not those of a row around it (the site group being mapped).
+		$rows                = $GLOBALS['mcc_rows'];
+		$GLOBALS['mcc_rows'] = array();
+		foreach ( array_slice( $set['ids'], 0, 200 ) as $id ) {
+			$out[] = mcc_schema_value( $spec, (int) $id );
+		}
+		$GLOBALS['mcc_rows'] = $rows;
+	}
+	return $out;
+}
+
+/**
+ * The site groups' nodes (a group on the site, not repeating, with a schema): its fields by their names, as a row's.
+ * One whose id is "organization" is the site's Organization (mcc_schema_organization: a business's details, its type
+ * a LocalBusiness or any of schema.org's); the others are nodes of their own on every page. [ id => node ].
+ */
+function mcc_schema_site_nodes(): array {
+	if ( isset( $GLOBALS['mcc_cache']['site_nodes'] ) ) {
+		return $GLOBALS['mcc_cache']['site_nodes'];
+	}
+	$out = array();
+	foreach ( mcc_groups() as $name => $g ) {
+		$s = mcc_schema_of( 'groups', $name );
+		if ( $g['repeat'] || empty( $s['type'] ) || ! in_array( 'options', $g['on'], true ) ) {
+			continue;
+		}
+		$id                    = sanitize_key( $s['id'] ?? $name );
+		$GLOBALS['mcc_rows'][] = array( 'fields' => $g['fields'], 'values' => mcc_group_value( $name ) );
+		$out[ $id ]            = array_merge( array( '@type' => $s['type'], '@id' => home_url( '/' ) . '#' . $id ), (array) mcc_schema_value( (array) ( $s['map'] ?? array() ), 0 ) );
+		array_pop( $GLOBALS['mcc_rows'] );
+	}
+	return $GLOBALS['mcc_cache']['site_nodes'] = $out;
 }
 
 // A post's node from its mapping (null without one): what its page is about, and an item where a Loop lists it.
@@ -271,18 +349,25 @@ function mcc_schema_context(): array {
 	return $ctx;
 }
 
-// The site's Organization: its name, address, logo. Marccent Local makes it the business (a LocalBusiness).
+// The site's Organization: its name, address, logo; with a site group mapped as "organization" (a business's
+// details, its type a LocalBusiness…), that group's values over these.
 function mcc_schema_organization(): array {
 	$home = home_url( '/' );
 	$logo = get_theme_mod( 'custom_logo' );
-	return apply_filters( 'marccent_schema_organization', array(
+	$org  = array(
 		'@type'       => 'Organization',
 		'@id'         => $home . '#organization',
 		'name'        => html_entity_decode( get_bloginfo( 'name' ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ),
 		'description' => html_entity_decode( get_bloginfo( 'description' ), ENT_QUOTES | ENT_HTML5, 'UTF-8' ),
 		'url'         => $home,
 		'logo'        => $logo ? wp_get_attachment_image_url( $logo, 'full' ) : get_site_icon_url( 512 ),
-	) );
+	);
+	$mapped = mcc_schema_site_nodes()['organization'] ?? array();
+	if ( $mapped ) {
+		$org = array_merge( $org, array_filter( $mapped, fn( $v ) => '' !== $v && array() !== $v ) );
+		$org['@id'] = $home . '#organization';
+	}
+	return apply_filters( 'marccent_schema_organization', $org );
 }
 
 // A post's author: a Person, with their profile page, bio and website.
@@ -311,6 +396,11 @@ function mcc_schema_graph(): array {
 		$graph[ $node['@id'] ?? count( $graph ) ] = $node;
 	};
 	$add( $org );
+	foreach ( mcc_schema_site_nodes() as $id => $node ) {
+		if ( 'organization' !== $id ) {
+			$add( $node );
+		}
+	}
 	$add( array(
 		'@type'      => 'WebSite',
 		'@id'        => $home . '#website',

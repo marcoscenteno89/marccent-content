@@ -34,6 +34,22 @@ From the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo):
 - [ ] **The editor's preview** of a related Loop (the related posts, not the type's first) and of counts and sums.
 - [ ] **A Loop's items as a Carousel's slides** (with Marccent Blocks: an "items only" Loop, or the Carousel reading
       the Loop's items).
+- [x] **A JSON field type** (Data: any names and values in one field): for a form's answers, whose fields differ per
+      form, and an API's raw item. Saved as JSON text with its texts cleaned, typed in the editor as JSON (checked as
+      it's typed) with a table of its values; `{{ data }}`, `{{ data:email }}`, `{{ data:address.city }}`; the Field
+      block shows it as a list. Done 2026-11-05. Not yet: a Loop's where or Show if on a value inside it on posts
+      (`data:city=Rexburg` reads it per item, not in the query). (found 2026-11-05)
+- [x] **Private post types** ("Only in wp-admin" on Fields → Post types): no pages, archive, search or menus; for a
+      form's entries. Done 2026-11-05. Not yet: who may read them (today WordPress's usual rules for private posts:
+      editors and admins). (found 2026-11-05)
+- [ ] **Single post types (a singleton), so Site content is a type like any other** (RULES.md A9: users get the
+      tools we use). A "Single" option on Fields → Post types: the type holds exactly one post, created with it, which
+      can be edited or replaced but not deleted (as WordPress guards the page set as the front page or the privacy
+      policy; WordPress's own Global Styles and Additional CSS are hidden single posts of this kind), and its menu
+      item opens that post instead of a list. Then Site content becomes a "Site" type made in Fields with Single on,
+      its groups put on it as on any type (no "whole site" location), `{{ business.phone }}` reading that post; the
+      mcc_<group> options move to its fields once. Gains: the posts' editor, revisions, and a client can make their own
+      single types (Promotions, Brand). Idea only, not decided (2026-11-05). (found 2026-11-05)
 
 ## Notes
 
@@ -55,8 +71,8 @@ From comparing with Webflow's CMS (2026-11-04):
 - [ ] **A front-end form that creates or edits a post of a type** (Django's ModelForm; Marccent forms save entries only). (found 2026-11-04)
 - [x] **An outer item's values in a Loop's where** (`state={{ code }}`): a nested Loop can only follow a relation field
       today, so cities can't be listed under a state that is only a field on them. (found 2026-11-04)
-- [ ] **marccent-local's area directory as Loops** — it's PHP (`mcl_render_directory`, grouped by `region`), not
-      blocks; needs Group by or the item above. (found 2026-11-04)
+- [x] **marccent-local's area directory as Loops** — done 2026-11-05: rc-imp's Service Areas is a page of nested
+      Loops (regions, then each one's cities) and the `city` type is the site's (Fields → Post types). (found 2026-11-04)
 - [ ] **A Schema box on Fields → Post types** (a type's `schema` is only in Fields → JSON today). (found 2026-11-05)
 - [ ] **A site group's schema** (options): the Organization from Site content's fields on a site without Marccent Local (its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
 - [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)

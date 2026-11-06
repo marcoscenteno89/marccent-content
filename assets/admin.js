@@ -42,7 +42,7 @@
 		opt( 'Text', 'string' ), opt( 'Text, several lines', 'text' ), opt( 'Rich text (HTML)', 'html' ), opt( 'Number', 'number' ), opt( 'Link (URL)', 'url' ),
 		opt( 'Email', 'email' ), opt( 'Date', 'date' ), opt( 'Yes / No', 'boolean' ), opt( 'Color', 'color' ), opt( 'Image', 'image' ), opt( 'Gallery (images)', 'gallery' ),
 		opt( 'File (PDF…)', 'file' ), opt( 'Location (address, map)', 'location' ), opt( 'Choice from a list', 'select' ),
-		opt( 'Relation (another post)', 'relation' ),
+		opt( 'Relation (another post)', 'relation' ), opt( 'Data (JSON: names and values)', 'json' ), opt( 'Opening hours', 'hours' ),
 	];
 	const SUPPORTS = [ [ 'title', 'Title' ], [ 'editor', 'Content (blocks)' ], [ 'thumbnail', 'Featured image' ], [ 'excerpt', 'Excerpt' ], [ 'page-attributes', 'Order (and parent)' ], [ 'revisions', 'Revisions' ] ];
 
@@ -109,7 +109,7 @@
 	// The field types as tiles (a Dashicon each), and what a field of each shows in its header.
 	const TYPE_ICONS = { string: 'editor-textcolor', text: 'editor-paragraph', number: 'calculator', url: 'admin-links', email: 'email',
 		date: 'calendar-alt', boolean: 'yes-alt', image: 'format-image', select: 'list-view', relation: 'networking', html: 'editor-code',
-		color: 'art', gallery: 'format-gallery', file: 'media-document', location: 'location' };
+		color: 'art', gallery: 'format-gallery', file: 'media-document', location: 'location', json: 'database', hours: 'clock' };
 	const icon = ( name ) => el( 'span', { className: `dashicons dashicons-${ name }`, 'aria-hidden': true } );
 	const typeLabel = ( type ) => TYPES.find( ( t ) => t.value === type )?.label || type;
 
@@ -155,7 +155,7 @@
 	let lastId = 0;
 	const fieldOf = ( k, f, open = false ) => ( {
 		id: ++lastId, open, key: k, was: k, label: f.label || labelOf( k ), type: f.type || 'string', help: f.help || '',
-		options: ( f.options || [] ).join( '\n' ), prefix: f.prefix || '', suffix: f.suffix || '', to: f.to || '', multiple: !! f.multiple,
+		options: ( f.options || [] ).join( '\n' ), prefix: f.prefix || '', suffix: f.suffix || '', to: f.to || '', multiple: !! f.multiple, closedDays: f.closed_days || '',
 		required: !! f.required, unique: !! f.unique, showIf: f.show_if || '',
 	} );
 
@@ -212,6 +212,10 @@
 					),
 					el( 'div', { className: 'mcc-tokens' }, `{{ ${ k || 'key' } }} is the title; {{ ${ k || 'key' }.<any of its keys> }} goes through it. A Loop’s “Related” lists the posts related either way.` )
 				),
+				f.type === 'hours' && el( Fragment, null,
+					el( TextControl, { label: 'Days that differ (optional)', help: 'A repeating group on the site with a date, hours and note: holidays, short days. Today’s hours, open now and the schema read it.', value: f.closedDays, onChange: ( closedDays ) => set( { closedDays } ) } ),
+					el( 'div', { className: 'mcc-tokens' }, `{{ ${ k || 'key' } }} is the week; {{ ${ k || 'key' }:today }}, {{ ${ k || 'key' }:open_now }}, {{ ${ k || 'key' }:monday }}. In a schema: "openingHoursSpecification": "${ k || 'key' }".` )
+				),
 				[ 'string', 'number' ].includes( f.type ) && el( Fragment, null,
 					el( 'div', { className: 'mcc-sub' }, 'Shown around the value' ),
 					Row(
@@ -223,7 +227,7 @@
 				el( 'div', { className: 'mcc-sub' }, 'Rules' ),
 				Row(
 					el( ToggleControl, { label: 'Required', help: 'A post isn’t published without it (a draft may be); the site content isn’t saved.', checked: f.required, onChange: ( required ) => set( { required } ) } ),
-					! repeat && ! [ 'boolean', 'gallery', 'location', 'html' ].includes( f.type ) && el( ToggleControl, { label: 'Unique', help: 'No two posts with the same value (a SKU, an email).', checked: f.unique, onChange: ( unique ) => set( { unique } ) } )
+					! repeat && ! [ 'boolean', 'gallery', 'location', 'html', 'json', 'hours' ].includes( f.type ) && el( ToggleControl, { label: 'Unique', help: 'No two posts with the same value (a SKU, an email).', checked: f.unique, onChange: ( unique ) => set( { unique } ) } )
 				),
 				el( TextControl, { label: 'Show only when', help: 'The other fields’ values, as a Loop’s where: kind=office, has_parking=1, price>0. Empty: always. Hidden, it isn’t required.', value: f.showIf, onChange: ( showIf ) => set( { showIf } ) } )
 			)
@@ -301,6 +305,7 @@
 					field.to = f.to;
 					if ( f.multiple ) field.multiple = true;
 				}
+				if ( f.type === 'hours' && f.closedDays.trim() ) field.closed_days = f.closedDays.trim();
 				if ( [ 'string', 'number' ].includes( f.type ) && f.prefix ) field.prefix = f.prefix;
 				if ( [ 'string', 'number' ].includes( f.type ) && f.suffix ) field.suffix = f.suffix;
 				if ( f.required ) field.required = true;
@@ -492,6 +497,7 @@
 			}
 			const out = { label: t.label.trim(), singular: t.singular.trim(), slug: urlOf( t.slug ) || urlOf( t.label ), icon: t.icon || 'dashicons-admin-post', archive: !! t.archive, supports: t.supports };
 			if ( t.noindex ) out.noindex = true;
+			if ( t.private ) out.private = true;
 			if ( taxes.length ) {
 				out.taxonomies = Object.fromEntries( taxes.map( ( x ) => [ keyOf( x.key, 32 ), { label: x.label.trim(), singular: x.singular.trim() || x.label.trim(), slug: urlOf( x.slug ) || urlOf( x.label ), hierarchical: x.hierarchical } ] ) );
 			}
@@ -513,8 +519,9 @@
 					el( TextControl, { label: 'Address', value: t.slug, help: `Its pages: /${ urlOf( t.slug ) || 'address' }/item-name/`, onChange: ( slug ) => set( { slug } ) } ),
 					el( TextControl, { label: 'Menu icon', value: t.icon, help: el( 'a', { href: 'https://developer.wordpress.org/resource/dashicons/', target: '_blank', rel: 'noopener' }, 'A Dashicon name' ), onChange: ( icon ) => set( { icon } ) } )
 				),
-				el( ToggleControl, { label: 'A page listing them all (an archive)', checked: !! t.archive, onChange: ( archive ) => set( { archive } ) } ),
-				el( ToggleControl, { label: 'Keep their pages out of search results', checked: !! t.noindex, onChange: ( noindex ) => set( { noindex } ) } )
+				el( ToggleControl, { label: 'Only in wp-admin (no pages on the site)', help: 'For what the team keeps but visitors never see: a form’s entries, notes. Its posts have no address, archive or place in search and menus.', checked: !! t.private, onChange: ( on ) => set( { private: on } ) } ),
+				! t.private && el( ToggleControl, { label: 'A page listing them all (an archive)', checked: !! t.archive, onChange: ( archive ) => set( { archive } ) } ),
+				! t.private && el( ToggleControl, { label: 'Keep their pages out of search results', checked: !! t.noindex, onChange: ( noindex ) => set( { noindex } ) } )
 			),
 			section( 'What its editor has',
 				SUPPORTS.map( ( [ s, l ] ) => el( CheckboxControl, { key: s, label: l, checked: t.supports.includes( s ), onChange: ( on ) => set( { supports: on ? [ ...t.supports, s ] : t.supports.filter( ( x ) => x !== s ) } ) } ) ),

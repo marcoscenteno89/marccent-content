@@ -60,6 +60,26 @@ if ( 'image' === ( $field['type'] ?? ( 'image' === $name ? 'image' : '' ) ) ) {
 	$html = sprintf( '<a href="%s" target="_blank" rel="noopener">%s</a>', esc_url( mcc_value( $post_id, "$name:map" ) ), esc_html( $value ) );
 	$link = '';
 	$tag  = in_array( $attributes['tag'], array( 'p', 'span', 'div' ), true ) ? $attributes['tag'] : 'p';
+} elseif ( 'hours' === ( $field['type'] ?? '' ) && ! str_contains( $key, ':' ) ) {
+	// The week as a table, today in bold, the coming days that differ after it.
+	$row  = mcc_row();
+	$raw  = $row && isset( $row['fields'][ $name ] ) ? ( $row['values'][ $name ] ?? array() ) : ( str_contains( $name, '.' ) ? mcc_group_value( explode( '.', $name, 2 )[0], $post_id )[ explode( '.', $name, 2 )[1] ] ?? array() : get_post_meta( $post_id, $name, true ) );
+	$html = mcc_hours_table( $raw, $field ) ?: esc_html( $value );
+	$link = '';
+	$tag  = str_starts_with( $html, '<table' ) ? 'div' : 'p';
+} elseif ( 'json' === ( $field['type'] ?? '' ) && ! str_contains( $key, ':' ) ) {
+	// All its values, a name and its value each.
+	$row  = mcc_row();
+	$raw  = $row && isset( $row['fields'][ $name ] ) ? ( $row['values'][ $name ] ?? '' ) : ( str_contains( $name, '.' ) ? '' : get_post_meta( $post_id, $name, true ) );
+	$data = is_array( $raw ) ? $raw : json_decode( (string) $raw, true );
+	$html = '';
+	foreach ( is_array( $data ) && ! array_is_list( $data ) ? $data : array() as $item => $item_value ) {
+		$text  = mcc_json_text_of( $item_value );
+		$html .= '' !== $text ? sprintf( '<dt>%s</dt><dd>%s</dd>', esc_html( mcc_json_label( (string) $item ) ), esc_html( $text ) ) : '';
+	}
+	$html = $html ?: esc_html( $value );
+	$link = '';
+	$tag  = str_contains( $html, '<dt>' ) ? 'dl' : 'p';
 } elseif ( 'url' === ( $field['type'] ?? '' ) ) {
 	$html = sprintf( '<a href="%1$s">%1$s</a>', esc_url( $value ) );
 	$link = '';

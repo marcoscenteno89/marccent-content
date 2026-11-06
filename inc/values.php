@@ -11,6 +11,9 @@
  *   <gallery field>: its images' URLs, comma-separated (<field>:<size>); :count how many
  *   <location field>: its address; :latitude, :longitude, :map (a Google Maps link to it)
  *   <html field>: its text (the Field block shows it as HTML)
+ *   <hours field>: the week in short; :today, :open_now, :monday… (inc/hours.php)
+ *   <json field>: its values as "Name: Ana · Email: ana@…"; <json field>:<name> one of them, as deep as it goes
+ *   ("data:email", "data:address.city", "data:items.0"); a list of values comma-separated
  *   <group>.<field>: a field of a group that doesn't repeat (the post's, else the site's): "office.phone"
  *   <relation>: the related post's title (several: comma-separated)
  *   <relation>.<key>: any of these keys of the related post, followed as far as it goes ("work_order.account.title");
@@ -302,6 +305,7 @@ const MCC_AGGREGATES = array( 'count', 'sum', 'average', 'minimum', 'maximum', '
  *   work_order.account    the posts of a type whose relation is the post (Django's work_order_set)
  *   city                  every published post of a type, in their menu order, then by title; page?parent=services:
  *                         the pages under one
+ *   services              a repeating group's rows on the site (Site content), in their order
  * and after the set, a key on each (sum:work_order.account.total, sum:this.line_items.quantity): 'rest'.
  * [ 'rows' => …, 'fields' => the group's fields ] or [ 'ids' => …, 'to' => their type ], with 'rest'; null when the
  * path names no group, relation or type (or the post's are behind a password).
@@ -330,6 +334,11 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		return array( 'ids' => $ids, 'to' => $f['to'], 'rest' => $rest );
 	}
 	[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
+	$g                  = mcc_groups()[ $of ] ?? null;
+	if ( $g && $g['repeat'] && in_array( 'options', $g['on'], true ) && ! post_type_exists( $of ) ) {
+		$rows = array_values( array_filter( mcc_group_value( $of ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+		return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => rtrim( "$by.$rest", '.' ) );
+	}
 	$f                  = mcc_fields( $of )[ $by ] ?? null;
 	$posts              = array( 'post_type' => $of, 'post_status' => 'publish', 'has_password' => false, 'posts_per_page' => -1, 'fields' => 'ids' );
 	if ( $f && 'relation' === $f['type'] ) {
@@ -447,6 +456,12 @@ function mcc_display_value( $raw, array $field, string $size = '' ): string {
 		}
 		return $l[ in_array( $size, array( 'latitude', 'longitude' ), true ) ? $size : 'address' ];
 	}
+	if ( 'json' === $field['type'] ) {
+		return mcc_json_display( $raw, $size );
+	}
+	if ( 'hours' === $field['type'] ) {
+		return mcc_hours_display( $raw, $field, $size );
+	}
 	if ( is_array( $raw ) || is_object( $raw ) ) {
 		return '';
 	}
@@ -518,4 +533,44 @@ function mcc_show_if( string $where, int $post_id ): bool {
 	$GLOBALS['mcc_no_visitor'] = false;
 	$yes = fn( $want ) => in_array( strtolower( $want ), array( 'yes', 'true', 'on' ), true ) ? '1' : ( in_array( strtolower( $want ), array( 'no', 'false', 'off' ), true ) ? '' : $want );
 	return mcc_where_row( $values, array_map( fn( $t ) => array( $t[0], $t[1], $yes( $t[2] ) ), $tests ) );
+}
+
+// A json field's value as text: the value at a path ("email", "address.city", "items.0"), or all of it as
+// "Name: Ana · Email: ana@…". Yes / No for true and false, a list's values comma-separated.
+function mcc_json_display( $raw, string $path = '' ): string {
+	$data = is_array( $raw ) ? $raw : json_decode( (string) $raw, true );
+	foreach ( '' === $path ? array() : explode( '.', $path ) as $step ) {
+		$step = is_numeric( $step ) ? (int) $step : $step;
+		if ( ! is_array( $data ) || ! array_key_exists( $step, $data ) ) {
+			return '';
+		}
+		$data = $data[ $step ];
+	}
+	return mcc_json_text_of( $data );
+}
+
+// Decoded json data as text (mcc_json_display).
+function mcc_json_text_of( $data ): string {
+	if ( is_bool( $data ) ) {
+		return $data ? __( 'Yes', 'marccent-content' ) : __( 'No', 'marccent-content' );
+	}
+	if ( ! is_array( $data ) ) {
+		return null === $data ? '' : (string) $data;
+	}
+	if ( array_is_list( $data ) ) {
+		return implode( ', ', array_filter( array_map( 'mcc_json_text_of', $data ), 'strlen' ) );
+	}
+	$lines = array();
+	foreach ( $data as $name => $value ) {
+		$text = mcc_json_text_of( $value );
+		if ( '' !== $text ) {
+			$lines[] = mcc_json_label( (string) $name ) . ': ' . $text;
+		}
+	}
+	return implode( ' · ', $lines );
+}
+
+// A name in json data as a label: "phone_number" → "Phone number".
+function mcc_json_label( string $name ): string {
+	return ucfirst( trim( str_replace( array( '_', '-' ), ' ', $name ) ) );
 }
