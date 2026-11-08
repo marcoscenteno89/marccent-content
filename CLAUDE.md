@@ -15,3 +15,6 @@ don't copy its rules here. What follows is how to apply them, and it isn't optio
 5. **Every change keeps the lists in sync.** A change that ships a ticket removes its Waiting on lines and stopgaps in
    every project it names, in the same round. Before you finish, run marccent-theme's checks from the workspace:
    `npm run todos` and `npm run conformance` (both are in `npm test`).
+6. **Tell Marcos when he's wrong.** If a request breaks these rules, the current structure or a common
+   convention, say so first and plainly ("That's wrong, because…"), with the fact behind it: the rule, the file,
+   the standard. No sugar coating and no praise padding. Then do what he decides once he's heard it.
