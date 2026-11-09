@@ -18,3 +18,9 @@ don't copy its rules here. What follows is how to apply them, and it isn't optio
 6. **Tell Marcos when he's wrong.** If a request breaks these rules, the current structure or a common
    convention, say so first and plainly ("That's wrong, because…"), with the fact behind it: the rule, the file,
    the standard. No sugar coating and no praise padding. Then do what he decides once he's heard it.
+7. **When no rule covers it, stop and ask** (PRODUCT-LINE.md section 9). Look in PRODUCT-LINE.md, this file, the
+   work lists, section 9's Decisions and how the other projects do it. If nothing settles it, or two rules conflict,
+   stop that part and ask Marcos in section 9's shape (the situation, the options, your recommendation and why, a
+   rule or a one-off), then write the answer down in the same round. Never settle it in one project alone. Section 9
+   also holds: no claim without output (name the command you ran and what it printed), one goal per change, and
+   nothing removed without a ticket or Marcos's OK.
