@@ -21,7 +21,7 @@
 
 $current = (int) ( $block->context['postId'] ?? 0 ) ?: ( is_singular() ? get_queried_object_id() : 0 );
 $n       = $GLOBALS['mcc_loop_n'] = ( $GLOBALS['mcc_loop_n'] ?? 0 ) + 1; // this Loop's number on the page
-// A where can read the item around it, an outer Loop's row or post: the cities of each region, mcl_region={{ key }}.
+// A where can read the item around it, an outer Loop's row or post: the cities of each region, region={{ key }}.
 // A token with nothing to fill it stays as it is, and matches nothing.
 if ( str_contains( (string) $attributes['where'], '{{' ) ) {
 	$GLOBALS['mcc_no_visitor'] = true; // what a visitor typed ({{ search }}) never decides what a Loop lists

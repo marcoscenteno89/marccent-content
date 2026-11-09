@@ -19,7 +19,7 @@ terms, users and templates, the Loop's paging, filters and search, and Show if.
 - [x] **Required and unique fields** (a SKU, an email). Checked when the editor saves (REST); a post saved some other
       way (code, an import) isn't checked.
 
-From the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo):
+From the crm-sample stress test (the site was removed 2026-11-09; its notes are in the wp repo's history, `sites/crm-sample/NOTES.md`):
 
 - [ ] **Site-wide counts and sums** (`count:account`, `sum:work_order.total`): a dashboard's headline numbers.
 - [x] **A where for an empty field** (`parent_account=`; `parent_account!=` for not empty).
@@ -74,7 +74,7 @@ From comparing with Webflow's CMS (2026-11-04):
 - [x] **marccent-local's area directory as Loops** — done 2026-11-05: rc-imp's Service Areas is a page of nested
       Loops (regions, then each one's cities) and the `city` type is the site's (Fields → Post types). (found 2026-11-04)
 - [ ] **A Schema box on Fields → Post types** (a type's `schema` is only in Fields → JSON today). (found 2026-11-05)
-- [ ] **A site group's schema** (options): the Organization from Site content's fields on a site without Marccent Local (its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
+- [ ] **A site group's schema** (options): the Organization from Site content's fields (Marccent Local is gone; its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
 - [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)
 - [ ] **A private field** (a flag on a field): never printed by tokens, the Field block, Loops or the JSON-LD, only edited in wp-admin (crm-sample's annual revenue). People who edit pages can print any published post's fields today. (found 2026-11-05)
 - [ ] **Sources that need the account owner to log in once** (OAuth: Facebook page recommendations, Instagram, Google Business Profile's every review): a Connect step per source. (found 2026-11-05)

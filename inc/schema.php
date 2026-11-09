@@ -20,7 +20,7 @@
  * object (its own "@type"), or plain text when it names no field. A post's node is on its page (what the page is
  * about) and wherever a Loop lists it (an ItemList); a group's rows are in the graph where a Loop shows them, so the
  * graph says what the page shows. Loops in the header and footer (template parts) are the site's frame, not the page's:
- * left out. Other plugins add their nodes with marccent_schema_graph (Marccent Local: the business, its places).
+ * left out. Other plugins add their nodes with marccent_schema_graph.
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -271,7 +271,7 @@ function mcc_schema_collect_posts( array $posts, int $loop ): void {
 /**
  * What the request is: its URL, title, description and image (search's: Rank Math's title and description when it's
  * there), the breadcrumb trail ([ name, url ] from Home), the WebPage's type, and the post. Plugins can change it
- * (marccent_schema_context: Marccent Local's areas archive).
+ * (marccent_schema_context).
  */
 function mcc_schema_context(): array {
 	static $ctx = null;
