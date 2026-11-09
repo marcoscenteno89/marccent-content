@@ -19,7 +19,7 @@ terms, users and templates, the Loop's paging, filters and search, and Show if.
 - [x] **Required and unique fields** (a SKU, an email). Checked when the editor saves (REST); a post saved some other
       way (code, an import) isn't checked.
 
-From the crm-sample stress test (the site was removed 2026-11-09; its notes are in the wp repo's history, `sites/crm-sample/NOTES.md`):
+From the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo):
 
 - [ ] **Site-wide counts and sums** (`count:account`, `sum:work_order.total`): a dashboard's headline numbers.
 - [x] **A where for an empty field** (`parent_account=`; `parent_account!=` for not empty).
