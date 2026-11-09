@@ -150,7 +150,7 @@ function mcc_hours_table( $raw, array $field ): string {
 	foreach ( $soon as $date => $e ) {
 		$rows .= sprintf( '<tr><th scope="row">%s</th><td>%s</td></tr>', esc_html( wp_date( 'D, M j', strtotime( "$date 12:00" ) ) ), esc_html( mcc_spans_display( $e['spans'] ) . ( '' !== $e['note'] ? " ({$e['note']})" : '' ) ) );
 	}
-	return '<table><tbody>' . $rows . '</tbody></table>';
+	return '<table class="table"><tbody>' . $rows . '</tbody></table>';
 }
 
 // An hours field in a schema mapping: the week as openingHoursSpecification, days with the same hours together.
