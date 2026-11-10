@@ -32,10 +32,10 @@ $visitor = mcc_loop_visitor( $attributes, $n );
 $total   = 0;
 $rows    = '' !== $attributes['source'] ? mcc_loop_rows( $attributes, $current, $visitor, $total ) : null;
 $query   = null === $rows ? mcc_loop_query( $attributes, $current, $visitor ) : null;
-// The items' layout: equal columns (cols-N, the default), or a row of items each its own width (the theme's
-// auto-cols), or a row that wraps (row-wrap): a row of buttons beside other content.
-$layout  = array( 'row' => 'grid auto-cols', 'wrap' => 'row-wrap' )[ (string) ( $attributes['layout'] ?? '' ) ] ?? sprintf( 'grid cols-%d', max( 1, (int) $attributes['cols'] ) );
-$grid    = trim( $layout . ' ' . $attributes['gap'] );
+// The items in the theme's Grid, with Grid's settings (marccent-theme markup/settings.json: layout, columns, gap):
+// equal columns (cols-N, the default), a row of items each its own width (auto-cols) or a row that wraps (row-wrap),
+// written by Marccent Blocks (marccent_blocks_grid).
+$grid = array_intersect_key( $attributes, array_flip( array( 'layout', 'columns', 'gap' ) ) );
 $per     = max( 1, (int) $attributes['perPage'] );
 $pages   = $visitor['paged'] ? (int) ceil( ( null === $rows ? max( 0, $query->found_posts - (int) $attributes['offset'] ) : $total ) / $per ) : 1;
 $filters = mcc_loop_filters_html( $attributes, $n, $visitor );
@@ -71,7 +71,7 @@ if ( null !== $rows ) {
 		$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 	}
 	mcc_schema_collect_rows( $attributes['source'], $rows, $current ); // the rows in the page's JSON-LD (inc/schema.php)
-	echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
+	echo $wrap( mcc_loop_grid( $grid, $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
 	return;
 }
 
@@ -96,4 +96,4 @@ if ( $post ) {
 } else {
 	wp_reset_postdata();
 }
-echo $wrap( sprintf( '<div %s>%s</div>', get_block_wrapper_attributes( array( 'class' => $grid ) ), $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
+echo $wrap( mcc_loop_grid( $grid, $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks

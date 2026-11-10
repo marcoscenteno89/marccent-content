@@ -153,6 +153,25 @@
 		[ 'marccent/button', { label: 'Read more', href: '{{link}}', icon: 'arrow-right', color: 'primary' } ],
 	] ] ];
 
+	// Grid's gap choices' labels (the choices themselves are Grid's, data.gaps).
+	const GAP_LABELS = { 'gap-0': 'None', 'gap-xs': 'Extra small', 'gap-sm': 'Small', '': 'Normal', 'gap-md': 'Medium', 'gap-lg': 'Large', 'gap-xl': 'Extra large' };
+	// A Loop saved before its grid took Grid's settings: cols is columns, and its layouts Grid's (inc/blocks.php does
+	// the same on the page).
+	const LAYOUTS = { '': 'cols', row: 'auto-cols', wrap: 'row-wrap' };
+	wp.hooks.addFilter( 'blocks.getBlockAttributes', 'marccent-content/loop-grid', ( attributes, type, html, saved ) => {
+		if ( type?.name !== 'marccent/loop' || ! saved ) {
+			return attributes;
+		}
+		const up = { ...attributes };
+		if ( 'cols' in saved && ! ( 'columns' in saved ) ) {
+			up.columns = saved.cols;
+		}
+		if ( saved.layout in LAYOUTS ) {
+			up.layout = LAYOUTS[ saved.layout ];
+		}
+		return up;
+	} );
+
 	registerBlockType( 'marccent/loop', {
 		icon: icon( 'update' ),
 		edit( { attributes: a, setAttributes: set, context } ) {
@@ -173,7 +192,7 @@
 			const first = useSelect( ( select ) => ( group ? null : select( 'core' ).getEntityRecords( 'postType', a.postType, { per_page: 1, status: 'publish', orderby: 'date' } ) ), [ a.postType, !! group ] );
 			const postId = first?.[ 0 ]?.id;
 			const blockProps = useBlockProps( { className: 'mcc-loop' } );
-			const inner = useInnerBlocksProps( { className: [ ( { row: 'grid auto-cols', wrap: 'row-wrap' } )[ a.layout ] || `grid cols-${ a.cols }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
+			const inner = useInnerBlocksProps( { className: [ ( { 'auto-cols': 'grid auto-cols', 'row-wrap': 'row-wrap' } )[ a.layout ] || `grid cols-${ a.columns }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
 			const orders = [ ...( forward ? [ opt( 'Their order in the relation', 'post__in' ) ] : [] ),
 				opt( 'Date', 'date' ), opt( 'Title', 'title' ), opt( 'Last modified', 'modified' ), opt( 'Menu order', 'menu_order' ), opt( 'Random', 'rand' ),
 				...Object.entries( type.fields ).map( ( [ name, f ] ) => opt( `${ f.label } (field)`, `field:${ name }` ) ) ];
@@ -223,9 +242,10 @@
 						el( ToggleControl, { label: 'A search box', checked: a.searchBox, onChange: ( searchBox ) => set( { searchBox } ) } )
 					),
 					el( PanelBody, { title: 'Grid' },
-						el( SelectControl, { label: 'Layout', value: a.layout || '', options: [ { label: 'Equal columns', value: '' }, { label: 'A row, each item its own width', value: 'row' }, { label: 'A row that wraps', value: 'wrap' } ], onChange: ( layout ) => set( { layout } ) } ),
-						! a.layout && el( RangeControl, { label: 'Columns', value: a.cols, min: 1, max: 6, onChange: ( cols ) => set( { cols } ) } ),
-						el( SelectControl, { label: 'Gap', value: a.gap, options: [ opt( 'None', 'gap-0' ), opt( 'Small', 'gap-sm' ), opt( 'Normal', '' ), opt( 'Large', 'gap-lg' ) ], onChange: ( gap ) => set( { gap } ) } )
+						// Grid's settings (marccent-theme markup/settings.json): its layouts a Loop takes, and its gaps.
+						el( SelectControl, { label: 'Layout', value: a.layout, options: [ opt( 'Equal columns', 'cols' ), opt( 'A row, each item its own width', 'auto-cols' ), opt( 'A row that wraps', 'row-wrap' ) ], onChange: ( layout ) => set( { layout } ) } ),
+						a.layout === 'cols' && el( RangeControl, { label: 'Columns', value: a.columns, min: 1, max: 6, onChange: ( columns ) => set( { columns } ) } ),
+						el( SelectControl, { label: 'Gap', value: a.gap, options: ( data.gaps || [] ).map( ( g ) => opt( GAP_LABELS[ g ] ?? g, g ) ), onChange: ( gap ) => set( { gap } ) } )
 					),
 					el( PanelBody, { title: 'Tokens', initialOpen: false },
 						el( 'p', null, 'Type these in any block of the item (a heading, a button’s label or link…) to show the post’s value. Add a format after a bar: {{ price | currency }}.' ),

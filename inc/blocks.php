@@ -24,6 +24,49 @@ add_action( 'init', function () {
 	register_block_type( MCC_DIR . '/blocks/field' );
 }, 20 ); // after the types (init, 10)
 
+// The Loop's items in the theme's Grid, from Grid's settings (layout, columns, gap), written by Marccent Blocks.
+function mcc_loop_grid( array $grid, string $items ): string {
+	$wrapper = fn( array $attrs ) => get_block_wrapper_attributes( array_filter( $attrs, fn( $v ) => null !== $v && '' !== $v ) );
+	if ( function_exists( 'marccent_blocks_grid' ) ) {
+		return marccent_blocks_grid( $grid, $items, $wrapper );
+	}
+	return sprintf( '<div %s>%s</div>', $wrapper( array( 'class' => trim( 'grid cols-' . max( 1, (int) ( $grid['columns'] ?? 3 ) ) . ' ' . ( $grid['gap'] ?? '' ) ) ) ), $items );
+}
+
+// A Loop saved before its grid took Grid's settings (2026-11-10): cols is columns, and its layouts Grid's ('' equal
+// columns, row each item its own width, wrap a wrapping row). Every render, however it's reached (a Loop nested in
+// another's item is handed over already prepared). The editor does the same (assets/editor.js).
+function mcc_loop_upgrade( array $a ): array {
+	if ( array_key_exists( 'cols', $a ) ) {
+		$a['columns'] ??= $a['cols'];
+		unset( $a['cols'] );
+	}
+	$layouts = array( '' => 'cols', 'row' => 'auto-cols', 'wrap' => 'row-wrap' );
+	if ( isset( $a['layout'] ) && isset( $layouts[ $a['layout'] ] ) ) {
+		$a['layout'] = $layouts[ $a['layout'] ];
+	}
+	return $a;
+}
+add_filter(
+	'register_block_type_args',
+	function ( $args, $name ) {
+		if ( 'marccent/loop' !== $name || empty( $args['render_callback'] ) ) {
+			return $args;
+		}
+		$render                  = $args['render_callback'];
+		$args['render_callback'] = function ( $attributes, $content, $block ) use ( $render ) {
+			$saved = (array) ( $block->parsed_block['attrs'] ?? array() );
+			if ( ( array_key_exists( 'cols', $saved ) || in_array( $saved['layout'] ?? null, array( '', 'row', 'wrap' ), true ) ) && $block->block_type ) {
+				$attributes = $block->block_type->prepare_attributes_for_render( mcc_loop_upgrade( $saved ) );
+			}
+			return $render( $attributes, $content, $block );
+		};
+		return $args;
+	},
+	10,
+	2
+);
+
 // The fields panel is part of the same script, so it loads in every post editor, not only with a block.
 add_action( 'enqueue_block_editor_assets', fn() => wp_enqueue_script( 'marccent-content-editor' ) );
 
@@ -43,7 +86,14 @@ function mcc_editor_data(): array {
 			'fields'     => (object) mcc_fields( $type->name ),
 		);
 	}
-	return array( 'types' => $types, 'groups' => (object) mcc_groups(), 'currency' => mcc_spec()['currency'] );
+	// The Loop's grid: Grid's gap choices (marccent-theme markup/settings.json, from Marccent Blocks).
+	$grid = function_exists( 'marccent_blocks_settings' ) ? ( marccent_blocks_settings()['Grid']['settings'] ?? array() ) : array();
+	return array(
+		'types'    => $types,
+		'groups'   => (object) mcc_groups(),
+		'currency' => mcc_spec()['currency'],
+		'gaps'     => $grid['gap']['choices'] ?? array( 'gap-0', 'gap-sm', '', 'gap-lg' ),
+	);
 }
 
 /**

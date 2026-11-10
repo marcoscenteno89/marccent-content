@@ -6,6 +6,9 @@ work fixed here only; anything the theme fixes is a ticket in marccent-theme's
 
 ## Bugs
 
+- [ ] **The Loop's filters and pager are styled here** (`inc/blocks.php`, `.mcc-filters`, `.mcc-pager` as inline CSS):
+      an adapter writes no CSS of its own (PRODUCT-LINE.md 4.6); they're the theme's Pagination and a form row. (found 2026-11-10)
+
 - [ ] **`!=` on a many-to-many** is approximate: `products!=12` still passes a work order with 12 and another product
       (needs a `NOT EXISTS` subquery). (found 2026-10-31)
 - [ ] **The editor's preview** of a related Loop (the related posts, not the type's first) and of counts and sums. (found 2026-10-31)
@@ -71,4 +74,4 @@ Found in the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo)
 - [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)
 - [ ] **Sources that need the account owner to log in once** (OAuth: Facebook page recommendations, Instagram, Google Business Profile's every review): a Connect step per source. (found 2026-11-05)
 - [ ] **A Reviews field group and pattern** (name, rating, review, date, link, source; a Loop with the Rating stars block) for the Google reviews source, and rc-imp's Place ID and a Places server key to try it. No Review schema: a business's own reviews don't get stars. (found 2026-11-05)
-- [x] **Loop: a row of content-width items** — done 2026-11-09: a Layout setting (equal columns, a row each item its own width, a row that wraps).
+- [x] **Loop: a row of content-width items** — done 2026-11-09: a Layout setting (equal columns, a row each item its own width, a row that wraps). Since 2026-11-10 the Loop's grid is the theme's Grid: Grid's `layout` (cols, auto-cols, row-wrap), `columns` and `gap` from settings.json, written by Marccent Blocks; old Loops (`cols`, `row`, `wrap`) are read as before.
