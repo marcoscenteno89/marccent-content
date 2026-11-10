@@ -21,10 +21,7 @@ work fixed here only; anything the theme fixes is a ticket in marccent-theme's
       not cleaned). Per relation: cascade, protect (refuse the delete), set null.
 - [ ] **Aggregates cost a query each.** A grid of 20 accounts with 3 totals is 60 queries per view. Cache per request,
       or prime one grouped query per Loop, before using them on big lists. (found 2026-10-31)
-- [ ] **A Loop's items as a Carousel's slides** (with Marccent Blocks: an "items only" Loop, or the Carousel reading
-      the Loop's items). (found 2026-10-31)
-- [ ] **A site group's schema** (options): the Organization from Site content's fields on a site without Marccent Local (its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
-- [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)
+- [x] **A Loop's items as a Carousel's slides** — done 2026-11-09 in Marccent Blocks: a Loop in an island's slot gives its items as the children. (found 2026-10-31)
 - [x] **Required and unique fields** (a SKU, an email). Checked when the editor saves (REST); a post saved some other
       way (code, an import) isn't checked. (found 2026-11-02)
 - [x] **A where for an empty field** (`parent_account=`; `parent_account!=` for not empty). (found 2026-11-02)
@@ -52,8 +49,6 @@ work fixed here only; anything the theme fixes is a ticket in marccent-theme's
 Found in the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo) and comparing with Webflow's CMS
 (2026-11-04).
 
-- [ ] **On delete** (Django's `on_delete`): deleting a post leaves the posts pointing to it with a broken key (hidden,
-      not cleaned). Per relation: cascade, protect (refuse the delete), set null. (found 2026-10-31)
 - [ ] **Computed values**: no `quantity × unit_price`; a line total or an order total has to be stored. (found 2026-10-31)
 - [ ] **Sort or filter by an aggregate** ("accounts with the most work orders first", "accounts with no contacts"). (found 2026-10-31)
 - [ ] **Site-wide counts and sums** (`count:account`, `sum:work_order.total`): a dashboard's headline numbers. (found 2026-10-31)
@@ -74,7 +69,6 @@ Found in the crm-sample stress test (`sites/crm-sample/NOTES.md` in the wp repo)
 - [ ] **A Schema box on Fields → Post types** (a type's `schema` is only in Fields → JSON today). (found 2026-11-05)
 - [ ] **A site group's schema** (options): the Organization from Site content's fields (Marccent Local is gone; its logo, social links, phone), instead of the site's name and tagline only. (found 2026-11-05)
 - [ ] **Check every mapped type with Google's Rich Results Test** once a site is live (FAQ, breadcrumbs, LocalBusiness). (found 2026-11-05)
-- [ ] **A private field** (a flag on a field): never printed by tokens, the Field block, Loops or the JSON-LD, only edited in wp-admin (crm-sample's annual revenue). People who edit pages can print any published post's fields today. (found 2026-11-05)
 - [ ] **Sources that need the account owner to log in once** (OAuth: Facebook page recommendations, Instagram, Google Business Profile's every review): a Connect step per source. (found 2026-11-05)
 - [ ] **A Reviews field group and pattern** (name, rating, review, date, link, source; a Loop with the Rating stars block) for the Google reviews source, and rc-imp's Place ID and a Places server key to try it. No Review schema: a business's own reviews don't get stars. (found 2026-11-05)
 - [x] **Loop: a row of content-width items** — done 2026-11-09: a Layout setting (equal columns, a row each item its own width, a row that wraps).
