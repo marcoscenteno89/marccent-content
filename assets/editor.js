@@ -173,7 +173,7 @@
 			const first = useSelect( ( select ) => ( group ? null : select( 'core' ).getEntityRecords( 'postType', a.postType, { per_page: 1, status: 'publish', orderby: 'date' } ) ), [ a.postType, !! group ] );
 			const postId = first?.[ 0 ]?.id;
 			const blockProps = useBlockProps( { className: 'mcc-loop' } );
-			const inner = useInnerBlocksProps( { className: [ 'grid', `cols-${ a.cols }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
+			const inner = useInnerBlocksProps( { className: [ ( { row: 'grid auto-cols', wrap: 'row-wrap' } )[ a.layout ] || `grid cols-${ a.cols }`, a.gap ].filter( Boolean ).join( ' ' ) }, { template: ITEM, orientation: 'horizontal' } );
 			const orders = [ ...( forward ? [ opt( 'Their order in the relation', 'post__in' ) ] : [] ),
 				opt( 'Date', 'date' ), opt( 'Title', 'title' ), opt( 'Last modified', 'modified' ), opt( 'Menu order', 'menu_order' ), opt( 'Random', 'rand' ),
 				...Object.entries( type.fields ).map( ( [ name, f ] ) => opt( `${ f.label } (field)`, `field:${ name }` ) ) ];
@@ -223,7 +223,8 @@
 						el( ToggleControl, { label: 'A search box', checked: a.searchBox, onChange: ( searchBox ) => set( { searchBox } ) } )
 					),
 					el( PanelBody, { title: 'Grid' },
-						el( RangeControl, { label: 'Columns', value: a.cols, min: 1, max: 6, onChange: ( cols ) => set( { cols } ) } ),
+						el( SelectControl, { label: 'Layout', value: a.layout || '', options: [ { label: 'Equal columns', value: '' }, { label: 'A row, each item its own width', value: 'row' }, { label: 'A row that wraps', value: 'wrap' } ], onChange: ( layout ) => set( { layout } ) } ),
+						! a.layout && el( RangeControl, { label: 'Columns', value: a.cols, min: 1, max: 6, onChange: ( cols ) => set( { cols } ) } ),
 						el( SelectControl, { label: 'Gap', value: a.gap, options: [ opt( 'None', 'gap-0' ), opt( 'Small', 'gap-sm' ), opt( 'Normal', '' ), opt( 'Large', 'gap-lg' ) ], onChange: ( gap ) => set( { gap } ) } )
 					),
 					el( PanelBody, { title: 'Tokens', initialOpen: false },

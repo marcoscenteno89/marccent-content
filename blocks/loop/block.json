@@ -23,6 +23,7 @@
 		"offset": { "type": "number", "default": 0 },
 		"excludeCurrent": { "type": "boolean", "default": true },
 		"cols": { "type": "number", "default": 3 },
+		"layout": { "type": "string", "default": "" },
 		"gap": { "type": "string", "default": "" },
 		"empty": { "type": "string", "default": "Nothing here yet." },
 		"paginate": { "type": "boolean", "default": false },
