@@ -8,7 +8,7 @@ terms, users and templates, the Loop's paging, filters and search, and Show if.
       posts; the Loop's current post is its context's, so Loops nest; the Loop skips WordPress's unused render of its
       item, which doubled with each nested Loop; a token inside a URL is URL-encoded; Fields → Field groups is
       WordPress's list table, a group's editor has a field per accordion).
-- [ ] **On delete** (Django's `on_delete`): deleting a post leaves the posts pointing to it with a broken key (hidden,
+- [ ] **On delete** (Django's `on_delete`) — set null done 2026-11-09 (a post deleted for good leaves no relation pointing to it, in groups that don't repeat); left for after 1.0: deleting a post leaves the posts pointing to it with a broken key (hidden,
       not cleaned). Per relation: cascade, protect (refuse the delete), set null.
 - [ ] **Aggregates cost a query each.** A grid of 20 accounts with 3 totals is 60 queries per view. Cache per request,
       or prime one grouped query per Loop, before using them on big lists.

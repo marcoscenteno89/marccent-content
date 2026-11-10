@@ -119,6 +119,30 @@ function mcc_is_many( array $f ): bool {
 	return 'relation' === $f['type'] && $f['multiple'];
 }
 
+/*
+ * On delete: a post deleted for good (not trashed: that can be restored) leaves no relation pointing to it. Every
+ * relation field to its type, in a group that doesn't repeat (each related post its own meta row), loses the rows
+ * that hold its id: set null, Django's SET_NULL. A relation in a repeating group's rows is inside the rows' one value
+ * and stays (the deleted post doesn't show: mcc_related_ids). Cascade and protect, per relation, are for after 1.0.
+ */
+add_action( 'before_delete_post', function ( int $post_id ) {
+	global $wpdb;
+	$type = get_post_type( $post_id );
+	foreach ( mcc_groups() as $g ) {
+		if ( $g['repeat'] ) {
+			continue;
+		}
+		foreach ( $g['fields'] as $name => $f ) {
+			if ( 'relation' === $f['type'] && $f['to'] === $type ) {
+				$ids = $wpdb->get_col( $wpdb->prepare( "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = %s", $name, (string) $post_id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				foreach ( $ids as $id ) {
+					delete_post_meta( (int) $id, $name, (string) $post_id );
+				}
+			}
+		}
+	}
+} );
+
 // A field's meta type: an image, a file or a related post is its id; a gallery a list of ids; a location an object.
 function mcc_meta_type( array $f ): string {
 	return array( 'number' => 'number', 'boolean' => 'boolean', 'image' => 'integer', 'file' => 'integer', 'relation' => 'integer', 'gallery' => 'array', 'location' => 'object', 'hours' => 'object' )[ $f['type'] ] ?? 'string';
