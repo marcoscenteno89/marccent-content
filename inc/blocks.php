@@ -126,10 +126,12 @@ function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ):
 			? array( 'meta_query' => array( array( 'key' => $rel, 'value' => $current, 'compare' => '=', 'type' => 'NUMERIC' ) ) )
 			: array( 'post__in' => array( 0 ) );
 	}
-	// Only the public types the editor offers (mcc_editor_data); never password-protected posts.
+	// Only the public types the editor offers (mcc_editor_data); never password-protected posts. Any other type (one
+	// the site doesn't have, as a kit's Loop before its type is added): nothing, so the Loop shows its empty text.
 	$object = get_post_type_object( $a['postType'] );
 	if ( ! is_post_type_viewable( $a['postType'] ) || ! $object || ! $object->public || ! $object->show_in_rest || 'attachment' === $object->name ) {
 		$a['postType'] = 'post';
+		$related       = array( 'post__in' => array( 0 ) );
 	}
 	$args = array(
 		'post_type'           => $a['postType'],
