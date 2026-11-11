@@ -160,7 +160,8 @@ function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ):
 	if ( $a['excludeCurrent'] && $current ) {
 		$args['post__not_in'] = array( $current );
 	}
-	$meta = array_merge( $related['meta_query'] ?? array(), mcc_where_meta( $a['postType'], array_merge( mcc_where( (string) ( $a['where'] ?? '' ) ), $visitor['tests'] ?? array() ) ) );
+	$exclude = array();
+	$meta    = array_merge( $related['meta_query'] ?? array(), mcc_where_meta( $a['postType'], array_merge( mcc_where( (string) ( $a['where'] ?? '' ) ), $visitor['tests'] ?? array() ), $exclude ) );
 	unset( $related['meta_query'] );
 	if ( $related ) {
 		$args = array_merge( $args, $related );
@@ -168,6 +169,7 @@ function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ):
 	if ( $meta ) {
 		$args['meta_query'] = array_merge( array( 'relation' => 'AND' ), $meta );
 	}
+	mcc_exclude_ids( $args, $exclude );
 	if ( '' !== trim( (string) ( $a['parent'] ?? '' ) ) && is_post_type_hierarchical( $a['postType'] ) ) {
 		$parent              = get_page_by_path( trim( $a['parent'], '/ ' ), OBJECT, $a['postType'] );
 		$args['post_parent'] = $parent ? $parent->ID : -1; // no such parent: nothing, not every post
@@ -287,7 +289,9 @@ function mcc_compare( string $have, string $op, string $want ): bool {
 }
 
 // A where's tests as a meta query on a post type's fields (each a meta row: several related posts, a row each).
-function mcc_where_meta( string $type, array $tests ): array {
+// != on a many-to-many can't be a meta query (any other row passes it): the posts that have one of its values go in
+// $exclude instead, for the query to leave out (mcc_exclude_ids).
+function mcc_where_meta( string $type, array $tests, array &$exclude = array() ): array {
 	$fields = mcc_fields( $type );
 	$query  = array();
 	foreach ( $tests as [ $name, $op, $want ] ) {
@@ -320,7 +324,11 @@ function mcc_where_meta( string $type, array $tests ): array {
 				$query[] = array( 'key' => $name, 'value' => $wants, 'compare' => 'IN', 'type' => $cast );
 				break;
 			case '!=':
-				$query[] = array( 'relation' => 'OR', $unset, array( 'key' => $name, 'value' => $wants, 'compare' => 'NOT IN', 'type' => $cast ) );
+				if ( mcc_is_many( $f ) ) {
+					$exclude = array_merge( $exclude, mcc_ids_with( $name, $wants ) );
+				} else {
+					$query[] = array( 'relation' => 'OR', $unset, array( 'key' => $name, 'value' => $wants, 'compare' => 'NOT IN', 'type' => $cast ) );
+				}
 				break;
 			case '~':
 				$query[] = mcc_is_many( $f )
@@ -332,6 +340,29 @@ function mcc_where_meta( string $type, array $tests ): array {
 		}
 	}
 	return $query;
+}
+
+// The posts with a meta row of a field holding one of the values (a many-to-many's related ids).
+function mcc_ids_with( string $name, array $values ): array {
+	global $wpdb;
+	$values = array_values( array_filter( $values, 'strlen' ) );
+	if ( ! $values ) {
+		return array();
+	}
+	$in = implode( ',', array_fill( 0, count( $values ), '%s' ) );
+	return array_map( 'intval', $wpdb->get_col( $wpdb->prepare( "SELECT DISTINCT post_id FROM $wpdb->postmeta WHERE meta_key = %s AND meta_value IN ($in)", $name, ...$values ) ) ); // phpcs:ignore WordPress.DB
+}
+
+// Leaves posts out of a query's args: from its post__in when it has one (WP_Query ignores post__not_in then).
+function mcc_exclude_ids( array &$args, array $ids ): void {
+	if ( ! $ids ) {
+		return;
+	}
+	if ( ! empty( $args['post__in'] ) ) {
+		$args['post__in'] = array_values( array_diff( $args['post__in'], $ids ) ) ?: array( 0 );
+	} else {
+		$args['post__not_in'] = array_merge( $args['post__not_in'] ?? array(), $ids );
+	}
 }
 
 /* The Loop's visitor side: paging and filters */
