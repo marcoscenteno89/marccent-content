@@ -383,7 +383,7 @@ function mcc_loop_filters_html( array $a, int $n, array $visitor ): string {
 	}
 	$controls = '';
 	if ( ! empty( $a['searchBox'] ) ) {
-		$controls .= sprintf( '<label class="mcc-filter"><span>%s</span><input type="search" class="input" name="mcc%ds" value="%s"></label>', esc_html__( 'Search', 'marccent-content' ), $n, esc_attr( $visitor['search'] ) );
+		$controls .= mcc_loop_field( "mcc{$n}s", __( 'Search', 'marccent-content' ), sprintf( '<input id="mcc%1$ds" type="search" class="input" name="mcc%1$ds" value="%2$s">', $n, esc_attr( $visitor['search'] ) ) );
 	}
 	foreach ( $filters as $key => $f ) {
 		$name    = "mcc{$n}_" . str_replace( ':', '_', $key );
@@ -403,15 +403,15 @@ function mcc_loop_filters_html( array $a, int $n, array $visitor ): string {
 			}
 		}
 		if ( null === $choices ) {
-			$control = sprintf( '<input class="input" name="%s" value="%s">', esc_attr( $name ), esc_attr( $current ) );
+			$control = sprintf( '<input id="%1$s" class="input" name="%1$s" value="%2$s">', esc_attr( $name ), esc_attr( $current ) );
 		} else {
 			$options = '<option value="">' . esc_html__( 'Any', 'marccent-content' ) . '</option>';
 			foreach ( $choices as $value => $label ) {
 				$options .= sprintf( '<option value="%s"%s>%s</option>', esc_attr( (string) $value ), selected( (string) $current, (string) $value, false ), esc_html( $label ) );
 			}
-			$control = sprintf( '<select class="input" name="%s">%s</select>', esc_attr( $name ), $options );
+			$control = sprintf( '<select id="%1$s" class="input" name="%1$s">%2$s</select>', esc_attr( $name ), $options );
 		}
-		$controls .= sprintf( '<label class="mcc-filter"><span>%s</span>%s</label>', esc_html( $f['label'] ), $control );
+		$controls .= mcc_loop_field( $name, $f['label'], $control );
 	}
 	// The address's other parameters (another Loop's page and filters) carry over; this Loop starts at its first page.
 	$hidden = '';
@@ -421,7 +421,12 @@ function mcc_loop_filters_html( array $a, int $n, array $visitor ): string {
 		}
 	}
 	$reset = $visitor['chosen'] || '' !== $visitor['search'] ? sprintf( ' <a class="btn" href="%s#mcc-loop-%d">%s</a>', esc_url( remove_query_arg( array_merge( array( "mcc{$n}p", "mcc{$n}s" ), array_map( fn( $k ) => "mcc{$n}_" . str_replace( ':', '_', $k ), array_keys( $filters ) ) ) ) ), $n, esc_html__( 'Clear', 'marccent-content' ) ) : '';
-	return sprintf( '<form class="mcc-filters" method="get" action="#mcc-loop-%d" role="search">%s%s<div class="mcc-filter mcc-filter-go"><button class="btn primary" type="submit">%s</button>%s</div></form>', $n, $hidden, $controls, esc_html__( 'Filter', 'marccent-content' ), $reset );
+	return sprintf( '<form class="row-wrap items-end gap-sm" method="get" action="#mcc-loop-%d" role="search">%s%s<div class="row-wrap gap-sm"><button class="btn primary" type="submit">%s</button>%s</div></form>', $n, $hidden, $controls, esc_html__( 'Filter', 'marccent-content' ), $reset );
+}
+
+// One filter: the theme's Field (its label joined to the control), the control's id the field's name.
+function mcc_loop_field( string $name, string $label, string $control ): string {
+	return sprintf( '<div data-component="field" class="field joined sub-x"><label class="field-label" for="%s">%s</label>%s</div>', esc_attr( $name ), esc_html( $label ), $control );
 }
 
 // The pages' links, under the Loop: previous, "Page 2 of 5", next; nothing for one page.
@@ -431,7 +436,7 @@ function mcc_loop_pager_html( int $n, int $page, int $pages ): string {
 	}
 	$link = fn( $p, $label, $rel ) => sprintf( '<a class="btn" rel="%s" href="%s#mcc-loop-%d">%s</a>', $rel, esc_url( $p > 1 ? add_query_arg( "mcc{$n}p", $p ) : remove_query_arg( "mcc{$n}p" ) ), $n, esc_html( $label ) );
 	return sprintf(
-		'<nav class="mcc-pager" aria-label="%s">%s<span>%s</span>%s</nav>',
+		'<nav class="grid auto-cols cols-between items-center" aria-label="%s">%s<span>%s</span>%s</nav>',
 		esc_attr__( 'Pages', 'marccent-content' ),
 		$page > 1 ? $link( $page - 1, __( '← Previous', 'marccent-content' ), 'prev' ) : '<span></span>',
 		/* translators: 1: this page, 2: how many pages */
@@ -439,10 +444,6 @@ function mcc_loop_pager_html( int $n, int $page, int $pages ): string {
 		$page < $pages ? $link( $page + 1, __( 'Next →', 'marccent-content' ), 'next' ) : '<span></span>'
 	);
 }
-
-add_action( 'wp_enqueue_scripts', function () {
-	wp_add_inline_style( 'marccent', '.mcc-filters{display:flex;flex-wrap:wrap;gap:.75rem;align-items:end;margin-bottom:1.25rem}.mcc-filter{display:grid;gap:.25rem;min-width:10rem}.mcc-filter>span{font-size:.85rem;opacity:.8}.mcc-filter-go{display:flex;gap:.5rem;min-width:0}.mcc-pager{display:flex;justify-content:space-between;align-items:center;gap:1rem;margin-top:1.5rem}' );
-}, 20 );
 
 /*
  * "Show if" on any block (the mccShowIf attribute, the editor's "Show if" panel): a where on the current row's,
