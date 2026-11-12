@@ -329,7 +329,10 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		}
 		$ids = mcc_related_ids( mcc_meta( $post_id, $first, $f ), $f );
 		if ( $ids && $tests ) {
-			$ids = get_posts( array( 'post_type' => $f['to'], 'post__in' => $ids, 'orderby' => 'post__in', 'posts_per_page' => -1, 'fields' => 'ids', 'meta_query' => mcc_where_meta( $f['to'], $tests ) ) );
+			$exclude = array();
+			$args    = array( 'post_type' => $f['to'], 'post__in' => $ids, 'orderby' => 'post__in', 'posts_per_page' => -1, 'fields' => 'ids', 'meta_query' => mcc_where_meta( $f['to'], $tests, $exclude ) );
+			mcc_exclude_ids( $args, $exclude );
+			$ids = get_posts( $args );
 		}
 		return array( 'ids' => $ids, 'to' => $f['to'], 'rest' => $rest );
 	}
@@ -345,7 +348,10 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		if ( ! $open ) {
 			return null;
 		}
-		$ids = get_posts( $posts + array( 'meta_query' => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests ) ) ) );
+		$exclude = array();
+		$args    = $posts + array( 'meta_query' => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests, $exclude ) ) );
+		mcc_exclude_ids( $args, $exclude );
+		$ids = get_posts( $args );
 		return array( 'ids' => $ids, 'to' => $of, 'rest' => $rest );
 	}
 	if ( ! post_type_exists( $of ) || ! is_post_type_viewable( $of ) ) {
@@ -358,7 +364,10 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 			$posts['post_parent'] = $parent ? $parent->ID : -1;
 		}
 	}
-	$ids = get_posts( $posts + array( 'orderby' => array( 'menu_order' => 'ASC', 'title' => 'ASC' ), 'meta_query' => mcc_where_meta( $of, $tests ) ) );
+	$exclude = array();
+	$args    = $posts + array( 'orderby' => array( 'menu_order' => 'ASC', 'title' => 'ASC' ), 'meta_query' => mcc_where_meta( $of, $tests, $exclude ) );
+	mcc_exclude_ids( $args, $exclude );
+	$ids = get_posts( $args );
 	return array( 'ids' => $ids, 'to' => $of, 'rest' => '' === $by ? '' : rtrim( "$by.$rest", '.' ) );
 }
 

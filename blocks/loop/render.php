@@ -41,7 +41,7 @@ $pages   = $visitor['paged'] ? (int) ceil( ( null === $rows ? max( 0, $query->fo
 $filters = mcc_loop_filters_html( $attributes, $n, $visitor );
 $pager   = mcc_loop_pager_html( $n, min( $visitor['page'], max( 1, $pages ) ), $pages );
 // The filters and pages around the grid, in a box the links come back to (#mcc-loop-2).
-$wrap = fn( $html ) => $filters || $visitor['paged'] ? sprintf( '<div id="mcc-loop-%d" class="mcc-loop">%s%s%s</div>', $n, $filters, $html, $pager ) : $html;
+$wrap = fn( $html ) => $filters || $visitor['paged'] ? sprintf( '<div id="mcc-loop-%d" class="mcc-loop grid cols-1">%s%s%s</div>', $n, $filters, $html, $pager ) : $html;
 
 if ( null === $rows ? ! $query->have_posts() : ! $rows ) {
 	echo $wrap( sprintf( '<p %s>%s</p>', get_block_wrapper_attributes( array( 'class' => 'loop-empty' ) ), esc_html( $attributes['empty'] ) ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- escaped as built
