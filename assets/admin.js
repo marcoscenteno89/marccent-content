@@ -156,7 +156,7 @@
 	const fieldOf = ( k, f, open = false ) => ( {
 		id: ++lastId, open, key: k, was: k, label: f.label || labelOf( k ), type: f.type || 'string', help: f.help || '',
 		options: ( f.options || [] ).join( '\n' ), prefix: f.prefix || '', suffix: f.suffix || '', to: f.to || '', multiple: !! f.multiple, closedDays: f.closed_days || '',
-		required: !! f.required, unique: !! f.unique, showIf: f.show_if || '',
+		required: !! f.required, unique: !! f.unique, private: !! f.private, showIf: f.show_if || '',
 	} );
 
 	// What a field's settings get wrong, for its accordion and the notice at the top.
@@ -226,6 +226,7 @@
 				el( TextControl, { label: 'Help for editors (optional)', value: f.help, onChange: ( help ) => set( { help } ) } ),
 				el( 'div', { className: 'mcc-sub' }, 'Rules' ),
 				Row(
+					el( ToggleControl, { label: 'Private', help: 'Edited here only: never shown on the site (no {{ token }}, Field block, Loop or count), nor in the schema.', checked: f.private, onChange: ( v ) => set( { private: v } ) } ),
 					el( ToggleControl, { label: 'Required', help: 'A post isn’t published without it (a draft may be); the site content isn’t saved.', checked: f.required, onChange: ( required ) => set( { required } ) } ),
 					! repeat && ! [ 'boolean', 'gallery', 'location', 'html', 'json', 'hours' ].includes( f.type ) && el( ToggleControl, { label: 'Unique', help: 'No two posts with the same value (a SKU, an email).', checked: f.unique, onChange: ( unique ) => set( { unique } ) } )
 				),
@@ -310,6 +311,7 @@
 				if ( [ 'string', 'number' ].includes( f.type ) && f.suffix ) field.suffix = f.suffix;
 				if ( f.required ) field.required = true;
 				if ( f.unique && ! repeat ) field.unique = true;
+				if ( f.private ) field.private = true;
 				if ( f.showIf.trim() ) field.show_if = f.showIf.trim();
 				out.fields[ keys[ i ] ] = field;
 			} );

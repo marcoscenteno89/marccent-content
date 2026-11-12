@@ -40,6 +40,8 @@
  * - "unique": true: no two posts of the type have the same value (a SKU, an email);
  * - "show_if": "kind=office": shown beside the post only while the post's other fields pass that where (the Loop's
  *   syntax, mcc_where); hidden, it isn't required either.
+ * - "private": true: edited beside the post and nowhere shown (#62): no token, Field block, Loop, count or sum, no
+ *   JSON-LD, and in the REST API only to those who can edit the post (an account's annual revenue).
  *
  * A relation is a foreign key, as Django's: { "account": { "type": "relation", "to": "account" } } on contacts is a
  * contact's account; with "multiple": true, a many-to-many ("products" on a work order). On posts each related post's
@@ -112,6 +114,11 @@ function mcc_normalize_fields( array $list ): array {
 		}
 	}
 	return $list;
+}
+
+// Whether a field is private: edited in wp-admin, never shown on a page (mcc_value, the Loop, the schema).
+function mcc_is_private( ?array $f ): bool {
+	return ! empty( $f['private'] );
 }
 
 // Several related posts: a meta row each.
@@ -288,7 +295,8 @@ function mcc_post_field( int $post_id, string $name ): ?array {
 function mcc_group_schema( array $g ): array {
 	$props = array();
 	foreach ( $g['fields'] as $name => $f ) {
-		$props[ $name ] = mcc_field_schema( $f );
+		// A private field in a row: only in the edit context (rest_filter_response_by_context drops it elsewhere).
+		$props[ $name ] = ( mcc_is_private( $f ) ? array( 'context' => array( 'edit' ) ) : array() ) + mcc_field_schema( $f );
 	}
 	$row = array( 'type' => 'object', 'properties' => $props, 'additionalProperties' => false );
 	return $g['repeat'] ? array( 'type' => 'array', 'items' => $row ) : $row;
@@ -522,7 +530,10 @@ function mcc_register_types(): void {
 			register_post_meta( $post_type, $name, array(
 				'type'              => mcc_meta_type( $f ),
 				'single'            => ! mcc_is_many( $f ), // several related posts: a meta row each
-				'show_in_rest'      => in_array( $f['type'], array( 'gallery', 'location', 'hours' ), true ) ? array( 'schema' => mcc_field_schema( $f ) ) : true,
+				// A private field only in the edit context (the editor's fields panel), not to every visitor of the API.
+				'show_in_rest'      => mcc_is_private( $f )
+					? array( 'schema' => array( 'context' => array( 'edit' ) ) + mcc_field_schema( $f ) )
+					: ( in_array( $f['type'], array( 'gallery', 'location', 'hours' ), true ) ? array( 'schema' => mcc_field_schema( $f ) ) : true ),
 				'label'             => $f['label'],
 				'sanitize_callback' => fn( $value ) => mcc_sanitize( $value, $f ),
 				'auth_callback'     => fn( $allowed, $key, $post_id ) => current_user_can( 'edit_post', $post_id ),
