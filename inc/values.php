@@ -90,7 +90,11 @@ function mcc_relation_step( int $post_id, string $name ): ?array {
 	} else {
 		return null;
 	}
-	return 'relation' === $f['type'] ? array( 'ids' => mcc_related_ids( $raw, $f ), 'rest' => $rest ) : null;
+	if ( 'relation' !== $f['type'] ) {
+		return null;
+	}
+	// A private relation leads nowhere on the page: no related post's title, field or count.
+	return array( 'ids' => mcc_is_private( $f ) ? array() : mcc_related_ids( $raw, $f ), 'rest' => $rest );
 }
 
 /**
@@ -209,6 +213,10 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	if ( null !== $global ) {
 		return mcc_format( $global, $format );
 	}
+	// A private field (or a relation's, as far as the key follows it): never on the page.
+	if ( mcc_is_private( mcc_field_def( $post_id, $key ) ) ) {
+		return '';
+	}
 
 	// A relation followed: the rest of the key on the related post (each one's, when there are several).
 	$step = mcc_relation_step( $post_id, $name );
@@ -324,7 +332,7 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 			return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => $rest );
 		}
 		$f = mcc_fields( $type )[ $first ] ?? null;
-		if ( ! $f || 'relation' !== $f['type'] ) {
+		if ( ! $f || 'relation' !== $f['type'] || mcc_is_private( $f ) ) {
 			return null;
 		}
 		$ids = mcc_related_ids( mcc_meta( $post_id, $first, $f ), $f );
@@ -345,7 +353,7 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 	$f                  = mcc_fields( $of )[ $by ] ?? null;
 	$posts              = array( 'post_type' => $of, 'post_status' => 'publish', 'has_password' => false, 'posts_per_page' => -1, 'fields' => 'ids' );
 	if ( $f && 'relation' === $f['type'] ) {
-		if ( ! $open ) {
+		if ( ! $open || mcc_is_private( $f ) ) {
 			return null;
 		}
 		$exclude = array();

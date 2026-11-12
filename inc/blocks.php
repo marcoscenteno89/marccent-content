@@ -114,7 +114,7 @@ function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ):
 	if ( str_starts_with( $rel, 'this.' ) ) {
 		$name = substr( $rel, 5 );
 		$f    = mcc_post_field( $current, $name );
-		if ( $f && 'relation' === $f['type'] ) {
+		if ( $f && 'relation' === $f['type'] && ! mcc_is_private( $f ) ) {
 			$a['postType'] = $f['to'];
 			$related       = array( 'post__in' => post_password_required( $current ) ? array( 0 ) : ( mcc_related_ids( mcc_meta( $current, $name, $f ), $f ) ?: array( 0 ) ) );
 		} else {
@@ -122,7 +122,7 @@ function mcc_loop_query( array $a, int $current = 0, array $visitor = array() ):
 		}
 	} elseif ( '' !== $rel ) {
 		$f       = mcc_fields( $a['postType'] )[ $rel ] ?? null;
-		$related = $f && 'relation' === $f['type'] && $current && ! post_password_required( $current )
+		$related = $f && 'relation' === $f['type'] && ! mcc_is_private( $f ) && $current && ! post_password_required( $current )
 			? array( 'meta_query' => array( array( 'key' => $rel, 'value' => $current, 'compare' => '=', 'type' => 'NUMERIC' ) ) )
 			: array( 'post__in' => array( 0 ) );
 	}
