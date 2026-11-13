@@ -234,13 +234,27 @@ function mcc_json_page(): void {
 	<?php
 }
 
+/**
+ * A kit's spec added to the site's: its types and groups that the site doesn't have, by name; a name the site
+ * already uses keeps the site's (its fields and settings aren't merged). Anything else in the kit's spec is left out.
+ * @param array $site The site's spec (mcc_spec). @param array $kit The kit's.
+ */
+function mcc_spec_added( array $site, array $kit ): array {
+	foreach ( array( 'types', 'groups' ) as $key ) {
+		$site[ $key ] = (array) ( $site[ $key ] ?? array() ) + (array) ( $kit[ $key ] ?? array() );
+	}
+	return $site;
+}
+
 /* Tools → Marccent export: the field groups and post types, then the site content (after them, so its groups exist) */
 
 add_filter( 'marccent_export_parts', function ( $parts ) {
 	$parts['content']      = array(
 		'label'  => __( 'Field groups and post types (Fields)', 'marccent-content' ),
 		'export' => 'mcc_spec_json',
-		'import' => 'mcc_save_spec',
+		// A site's export replaces the spec; a kit's (its "kit" header) adds its groups and types, keeping the site's
+		// own where a name is taken (marccent-theme#63, docs/KITS.md).
+		'import' => fn( array $data, array $file = array() ) => mcc_save_spec( isset( $file['kit'] ) ? mcc_spec_added( mcc_spec(), $data ) : $data ),
 	);
 	$parts['site_content'] = array(
 		'label'  => __( 'Site content (the groups on the site)', 'marccent-content' ),
