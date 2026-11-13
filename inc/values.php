@@ -348,6 +348,10 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		if ( ! $open ) {
 			return null;
 		}
+		$cached = mcc_set_cache()[ mcc_set_key( $post_id, $path, $tests ) ] ?? null;
+		if ( null !== $cached ) {
+			return $cached;
+		}
 		$exclude = array();
 		$args    = $posts + array( 'meta_query' => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $post_id, 'compare' => '=', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests, $exclude ) ) );
 		mcc_exclude_ids( $args, $exclude );
@@ -369,6 +373,66 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 	mcc_exclude_ids( $args, $exclude );
 	$ids = get_posts( $args );
 	return array( 'ids' => $ids, 'to' => $of, 'rest' => '' === $by ? '' : rtrim( "$by.$rest", '.' ) );
+}
+
+/*
+ * The sets a Loop's posts share (marccent-content#66): a grid of 20 accounts each counting its work orders was 20
+ * queries a token; mcc_prime_aggregates (the Loop, before its items render) asks once for every post on the page and
+ * keeps each one's set here, which mcc_set reads first. Only for this request; any post or field saved empties it.
+ */
+function &mcc_set_cache(): array {
+	static $sets = array();
+	return $sets;
+}
+function mcc_set_key( int $post_id, string $path, array $tests ): string {
+	return $post_id . '|' . $path . '|' . md5( serialize( $tests ) );
+}
+foreach ( array( 'save_post', 'deleted_post', 'added_post_meta', 'updated_post_meta', 'deleted_post_meta' ) as $mcc_hook ) {
+	add_action( $mcc_hook, function () {
+		$sets = &mcc_set_cache();
+		$sets = array();
+	} );
+}
+
+/**
+ * Primes the sets the aggregates in a Loop's item markup go over ({{ count:work_order.account }}, sum:…), for all of
+ * its posts with one query each: the posts of a type whose relation is any of them, grouped by which one.
+ * @param int[]  $post_ids The Loop's posts.
+ * @param string $markup   Its item's markup, where the tokens are.
+ */
+function mcc_prime_aggregates( array $post_ids, string $markup ): void {
+	$post_ids = array_values( array_filter( array_map( 'intval', $post_ids ) ) );
+	if ( count( $post_ids ) < 2 || ! preg_match_all( '/\{\{\s*(?:' . implode( '|', MCC_AGGREGATES ) . '):([a-z0-9_.]+)(?:\?([^}\s]*))?\s*\}\}/i', html_entity_decode( $markup, ENT_QUOTES | ENT_HTML5, 'UTF-8' ), $found, PREG_SET_ORDER ) ) {
+		return;
+	}
+	$sets = &mcc_set_cache();
+	foreach ( $found as $m ) {
+		$path               = $m[1];
+		$tests              = mcc_where( $m[2] ?? '' );
+		[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
+		$f                  = 'this' === $of ? null : ( mcc_fields( $of )[ $by ] ?? null );
+		if ( ! $f || 'relation' !== $f['type'] || isset( $sets[ mcc_set_key( $post_ids[0], $path, $tests ) ] ) ) {
+			continue;
+		}
+		$open    = array_filter( $post_ids, fn( $id ) => ! post_password_required( $id ) );
+		$exclude = array();
+		$args    = array( 'post_type' => $of, 'post_status' => 'publish', 'has_password' => false, 'posts_per_page' => -1, 'fields' => 'ids',
+			'meta_query' => array_merge( array( 'relation' => 'AND', array( 'key' => $by, 'value' => $open ?: array( 0 ), 'compare' => 'IN', 'type' => 'NUMERIC' ) ), mcc_where_meta( $of, $tests, $exclude ) ) );
+		mcc_exclude_ids( $args, $exclude );
+		$ids = get_posts( $args );
+		update_meta_cache( 'post', $ids );
+		$by_post = array_fill_keys( $open, array() );
+		foreach ( $ids as $id ) {
+			foreach ( array_unique( array_map( 'intval', get_post_meta( $id, $by ) ) ) as $to ) {
+				if ( isset( $by_post[ $to ] ) ) {
+					$by_post[ $to ][] = $id;
+				}
+			}
+		}
+		foreach ( $by_post as $id => $list ) {
+			$sets[ mcc_set_key( $id, $path, $tests ) ] = array( 'ids' => $list, 'to' => $of, 'rest' => $rest );
+		}
+	}
 }
 
 /**

@@ -79,6 +79,7 @@ global $post;
 $outer = $post; // inside another Loop, its item: back to it after, not to the page's post
 $items = '';
 mcc_prime_related( mcc_fields( $query->posts[0]->post_type ), wp_list_pluck( $query->posts, 'ID' ), $markup );
+mcc_prime_aggregates( wp_list_pluck( $query->posts, 'ID' ), $markup ); // count:, sum:… for every item in one query each
 foreach ( $query->posts as $i => $post ) { // phpcs:ignore WordPress.WP.GlobalVariablesOverride -- the loop's current post, reset below
 	setup_postdata( $post );
 	$GLOBALS['mcc_loop_pos'][] = $first + $i;
