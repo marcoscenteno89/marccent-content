@@ -71,7 +71,7 @@ if ( null !== $rows ) {
 		$items .= $cell ? '<div class="grid cols-1 gap-sm content-start">' . $html . '</div>' : $html;
 	}
 	mcc_schema_collect_rows( $attributes['source'], $rows, $current ); // the rows in the page's JSON-LD (inc/schema.php)
-	echo $wrap( mcc_loop_grid( $grid, $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
+	echo $wrap( mcc_loop_grid( $grid, $items, $inner ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
 	return;
 }
 
@@ -97,4 +97,4 @@ if ( $post ) {
 } else {
 	wp_reset_postdata();
 }
-echo $wrap( mcc_loop_grid( $grid, $items ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks
+echo $wrap( mcc_loop_grid( $grid, $items, $inner ) ); // phpcs:ignore WordPress.Security.EscapeOutput -- rendered blocks

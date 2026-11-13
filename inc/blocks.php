@@ -24,8 +24,15 @@ add_action( 'init', function () {
 	register_block_type( MCC_DIR . '/blocks/field' );
 }, 20 ); // after the types (init, 10)
 
-// The Loop's items in the theme's Grid, from Grid's settings (layout, columns, gap), written by Marccent Blocks.
-function mcc_loop_grid( array $grid, string $items ): string {
+/*
+ * The Loop's items in the theme's Grid, from Grid's settings (layout, columns, gap), written by Marccent Blocks. Items
+ * that are a parent's own children (an Accordion's items: marccent-theme#50) go in as they are, no grid around them,
+ * so the parent holds them directly; the mcc_loop_bare filter says which ($inner: the Loop's item blocks).
+ */
+function mcc_loop_grid( array $grid, string $items, array $inner = array() ): string {
+	if ( apply_filters( 'mcc_loop_bare', false, $inner ) ) {
+		return $items;
+	}
 	$wrapper = fn( array $attrs ) => get_block_wrapper_attributes( array_filter( $attrs, fn( $v ) => null !== $v && '' !== $v ) );
 	if ( function_exists( 'marccent_blocks_grid' ) ) {
 		return marccent_blocks_grid( $grid, $items, $wrapper );
