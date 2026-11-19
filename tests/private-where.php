@@ -81,6 +81,11 @@ mcc_check( 'row: a private amount>100 fails the row', ! mcc_where_row( $row, arr
 mcc_check( 'row: a public label=Tier still passes the row', mcc_where_row( $row, array( array( 'label', '=', 'Tier' ) ), mcc_private_names( $group_fields ) ) );
 mcc_check( 'row: without the private names the amount passes (the control)', mcc_where_row( $row, array( array( 'amount', '>', '100' ) ) ) );
 
+// The visitor's search over a row: a private value is never searched, so typing it finds nothing.
+mcc_check( 'search: a private amount (500) is not found', ! mcc_row_matches( $row, '500', mcc_private_names( $group_fields ) ) );
+mcc_check( 'search: a public label (tier) is found', mcc_row_matches( $row, 'tier', mcc_private_names( $group_fields ) ) );
+mcc_check( 'search: without the private names the amount is found (the control)', mcc_row_matches( $row, '500' ) );
+
 // Clean up what the test made.
 foreach ( $ids as $id ) {
 	wp_delete_post( $id, true );

@@ -220,8 +220,8 @@ function mcc_loop_rows( array $a, int $current = 0, array $visitor = array(), ?i
 
 	$tests  = array_merge( mcc_where( (string) $a['where'] ), $visitor['tests'] ?? array() );
 	$search = mb_strtolower( (string) ( $visitor['search'] ?? '' ) );
-	$rows   = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests, mcc_private_names( $g['fields'] ) )
-		&& ( '' === $search || str_contains( mb_strtolower( implode( ' ', array_filter( $row, 'is_scalar' ) ) ), $search ) ) );
+	$private = mcc_private_names( $g['fields'] );
+	$rows    = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests, $private ) && mcc_row_matches( $row, $search, $private ) );
 	$offset = max( 0, (int) $a['offset'] );
 	$per    = max( 1, (int) $a['perPage'] );
 	$total  = max( 0, count( $rows ) - $offset );
@@ -277,6 +277,15 @@ function mcc_where_row( array $row, array $tests, array $private = array() ): bo
 		}
 	}
 	return true;
+}
+
+// Whether a row's text holds the visitor's search (lowercase, '' for none). A private field's value is never searched.
+function mcc_row_matches( array $row, string $search, array $private = array() ): bool {
+	if ( '' === $search ) {
+		return true;
+	}
+	$shown = array_diff_key( $row, array_flip( $private ) );
+	return str_contains( mb_strtolower( implode( ' ', array_filter( $shown, 'is_scalar' ) ) ), $search );
 }
 
 // <, >, <=, >= on numbers, else on text (dates as 2026-10-31 compare as text); never on an empty value.
