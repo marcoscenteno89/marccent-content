@@ -328,7 +328,7 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		[ $first, $rest ] = array_pad( explode( '.', substr( $path, 5 ), 2 ), 2, '' );
 		$g                = mcc_groups()[ $first ] ?? null;
 		if ( $g && $g['repeat'] && in_array( $type, mcc_group_types( $g ), true ) ) {
-			$rows = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+			$rows = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests, mcc_private_names( $g['fields'] ) ) ) );
 			return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => $rest );
 		}
 		$f = mcc_fields( $type )[ $first ] ?? null;
@@ -347,7 +347,7 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 	[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
 	$g                  = mcc_groups()[ $of ] ?? null;
 	if ( $g && $g['repeat'] && in_array( 'options', $g['on'], true ) && ! post_type_exists( $of ) ) {
-		$rows = array_values( array_filter( mcc_group_value( $of ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+		$rows = array_values( array_filter( mcc_group_value( $of ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests, mcc_private_names( $g['fields'] ) ) ) );
 		return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => rtrim( "$by.$rest", '.' ) );
 	}
 	$f                  = mcc_fields( $of )[ $by ] ?? null;

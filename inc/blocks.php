@@ -220,7 +220,7 @@ function mcc_loop_rows( array $a, int $current = 0, array $visitor = array(), ?i
 
 	$tests  = array_merge( mcc_where( (string) $a['where'] ), $visitor['tests'] ?? array() );
 	$search = mb_strtolower( (string) ( $visitor['search'] ?? '' ) );
-	$rows   = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests )
+	$rows   = array_filter( $rows, fn( $row ) => is_array( $row ) && mcc_where_row( $row, $tests, mcc_private_names( $g['fields'] ) )
 		&& ( '' === $search || str_contains( mb_strtolower( implode( ' ', array_filter( $row, 'is_scalar' ) ) ), $search ) ) );
 	$offset = max( 0, (int) $a['offset'] );
 	$per    = max( 1, (int) $a['perPage'] );
@@ -250,10 +250,10 @@ function mcc_where( string $where ): array {
 	return $tests;
 }
 
-// Whether a row passes a where's tests.
-function mcc_where_row( array $row, array $tests ): bool {
+// Whether a row passes a where's tests. A private field's value (named in $private) reads as empty, as in show-if.
+function mcc_where_row( array $row, array $tests, array $private = array() ): bool {
 	foreach ( $tests as [ $name, $op, $want ] ) {
-		$raw   = $row[ $name ] ?? '';
+		$raw   = in_array( $name, $private, true ) ? '' : ( $row[ $name ] ?? '' );
 		$have  = array_map( 'strval', is_array( $raw ) ? $raw : array( $raw ) );
 		$wants = array_map( 'trim', explode( ',', $want ) );
 		switch ( $op ) {
@@ -297,6 +297,17 @@ function mcc_where_meta( string $type, array $tests, array &$exclude = array() )
 	foreach ( $tests as [ $name, $op, $want ] ) {
 		$f = $fields[ $name ] ?? null;
 		if ( ! $f ) {
+			continue;
+		}
+		if ( mcc_is_private( $f ) ) {
+			// A private field reads as empty (as in show-if): the test is true of every post or of none. Of none: a
+			// meta key that is both missing and present, which no post has.
+			$yes  = in_array( strtolower( $want ), array( '1', 'yes', 'true', 'on' ), true );
+			$no   = in_array( strtolower( $want ), array( 'no', 'false', 'off' ), true );
+			$test = array( $name, $op, 'boolean' === $f['type'] ? ( $yes ? '1' : ( $no ? '' : $want ) ) : $want );
+			if ( ! mcc_where_row( array(), array( $test ), array( $name ) ) ) {
+				$query[] = array( 'relation' => 'AND', array( 'key' => $name, 'compare' => 'NOT EXISTS' ), array( 'key' => $name, 'compare' => 'EXISTS' ) );
+			}
 			continue;
 		}
 		$cast  = in_array( $f['type'], array( 'number', 'relation', 'image' ), true ) ? 'NUMERIC' : ( 'date' === $f['type'] ? 'DATE' : 'CHAR' );

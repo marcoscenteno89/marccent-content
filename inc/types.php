@@ -121,6 +121,11 @@ function mcc_is_private( ?array $f ): bool {
 	return ! empty( $f['private'] );
 }
 
+// The names of a group's private fields (a row's values for them read as empty in a where: mcc_where_row).
+function mcc_private_names( array $fields ): array {
+	return array_keys( array_filter( $fields, 'mcc_is_private' ) );
+}
+
 // Several related posts: a meta row each.
 function mcc_is_many( array $f ): bool {
 	return 'relation' === $f['type'] && $f['multiple'];
