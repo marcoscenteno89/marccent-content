@@ -106,6 +106,7 @@ $product_one = wp_insert_post( array( 'post_title' => 'Relation test product one
 $product_two = wp_insert_post( array( 'post_title' => 'Relation test product two', 'post_status' => 'publish', 'post_type' => 'post' ) );
 update_post_meta( $product_one, 'price', 10 );
 update_post_meta( $product_one, 'vip', '1' );
+update_post_meta( $product_one, 'revenue', 2000000 ); // above the threshold: a guard that's off would count it
 update_post_meta( $product_two, 'price', 20 );
 $post_a = wp_insert_post( array( 'post_title' => 'Relation test A', 'post_status' => 'publish', 'post_type' => 'post' ) );
 $post_b = wp_insert_post( array( 'post_title' => 'Relation test B', 'post_status' => 'publish', 'post_type' => 'post' ) );
