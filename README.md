@@ -42,3 +42,7 @@ Works with [Marccent Blocks](https://github.com/marcoscenteno89/marccent-blocks)
 
 Deleting the plugin removes its settings (the content types' spec). The posts of those types, their terms, fields and
 groups (the site's too, mcc_<group> options) stay: they're the site's content, and they're back as they were if the plugin is installed again with the same spec.
+
+## Tests
+
+Tests: see docs/TESTING.md in marccent-theme.

@@ -17,3 +17,40 @@ jobs:
           tools: none
       - name: PHP syntax
         run: find . -name '*.php' -not -path './node_modules/*' -print0 | xargs -0 -n1 php -l > /dev/null
+
+  # The private-field rules (tests/private-where.php) on a real WordPress: a leak fails the build.
+  private-where:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: wordpress
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s --health-timeout=5s --health-retries=12
+    steps:
+      - name: WordPress 6.9
+        run: |
+          curl -sSL https://wordpress.org/wordpress-6.9.tar.gz | tar xz
+          curl -sSL -o "$RUNNER_TEMP/wp-cli.phar" https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+      - uses: actions/checkout@v4
+        with:
+          path: wordpress/wp-content/plugins/marccent-content
+      - name: Marccent Blocks v0.4.1
+        run: git clone --depth 1 --branch v0.4.1 https://github.com/marcoscenteno89/marccent-blocks wordpress/wp-content/plugins/marccent-blocks
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli
+          tools: none
+      - name: Install the site and activate the plugins
+        run: |
+          WP="php $RUNNER_TEMP/wp-cli.phar --path=wordpress --allow-root"
+          $WP config create --dbname=wordpress --dbuser=root --dbpass=root --dbhost=127.0.0.1 --skip-check
+          $WP core install --url=http://localhost --title=CI --admin_user=admin --admin_password=admin --admin_email=ci@example.com --skip-email
+          $WP plugin activate marccent-blocks marccent-content
+      - name: Private-field rules
+        run: php wordpress/wp-content/plugins/marccent-content/tests/private-where.php
