@@ -6,4 +6,4 @@ Your work: the issues labeled `project: marccent-content` on the [Marccent board
 [docs/PRODUCT-LINE.md](docs/PRODUCT-LINE.md). Both are shared by every project, so don't add rules here: change
 WORKING.md in marccent-theme instead.
 
-Tests: `tests/private-where.php` (CI job `private-where`; by hand, see README → Tests).
+Tests: see docs/TESTING.md in marccent-theme.

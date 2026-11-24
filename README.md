@@ -45,10 +45,4 @@ groups (the site's too, mcc_<group> options) stay: they're the site's content, a
 
 ## Tests
 
-`tests/private-where.php` checks that a private field never leaks through a Loop's where, a visitor's filter, a count or sum, show-if or a repeating group's rows. CI runs it on WordPress 6.9 with Marccent Blocks v0.4.1 (the `private-where` job in `.github/workflows/ci.yml`) and fails the build when a check fails. To run it by hand, on a site with both plugins active:
-
-```
-php wp-content/plugins/marccent-content/tests/private-where.php
-```
-
-Expected: one `PASS` line per check, then `All checks passed`, exit 0. Run it before any merge that touches `inc/`.
+Tests: see docs/TESTING.md in marccent-theme.
