@@ -105,6 +105,9 @@ function mcc_schema_value( $spec, int $post_id ) {
 		return preg_match( '/[\p{L}\p{N}]/u', $text ) ? $text : '';
 	}
 	$field = mcc_field_def( $post_id, $spec );
+	if ( mcc_is_private( $field ) ) {
+		return ''; // never in the JSON-LD
+	}
 	// Opening hours: the week's openingHoursSpecification; "hours:special", its days that differ.
 	if ( 'hours' === ( $field['type'] ?? '' ) ) {
 		return str_ends_with( $spec, ':special' ) ? mcc_hours_special_schema( $field ) : mcc_hours_schema( mcc_schema_raw( $post_id, explode( ':', $spec )[0] ) );

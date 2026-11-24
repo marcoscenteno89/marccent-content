@@ -90,7 +90,11 @@ function mcc_relation_step( int $post_id, string $name ): ?array {
 	} else {
 		return null;
 	}
-	return 'relation' === $f['type'] ? array( 'ids' => mcc_related_ids( $raw, $f ), 'rest' => $rest ) : null;
+	if ( 'relation' !== $f['type'] ) {
+		return null;
+	}
+	// A private relation leads nowhere on the page: no related post's title, field or count.
+	return array( 'ids' => mcc_is_private( $f ) ? array() : mcc_related_ids( $raw, $f ), 'rest' => $rest );
 }
 
 /**
@@ -209,6 +213,10 @@ function mcc_value( int $post_id, string $key, string $format = '' ): string {
 	if ( null !== $global ) {
 		return mcc_format( $global, $format );
 	}
+	// A private field (or a relation's, as far as the key follows it): never on the page.
+	if ( mcc_is_private( mcc_field_def( $post_id, $key ) ) ) {
+		return '';
+	}
 
 	// A relation followed: the rest of the key on the related post (each one's, when there are several).
 	$step = mcc_relation_step( $post_id, $name );
@@ -320,11 +328,11 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 		[ $first, $rest ] = array_pad( explode( '.', substr( $path, 5 ), 2 ), 2, '' );
 		$g                = mcc_groups()[ $first ] ?? null;
 		if ( $g && $g['repeat'] && in_array( $type, mcc_group_types( $g ), true ) ) {
-			$rows = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+			$rows = array_values( array_filter( mcc_group_value( $first, $post_id ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests, mcc_private_names( $g['fields'] ) ) ) );
 			return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => $rest );
 		}
 		$f = mcc_fields( $type )[ $first ] ?? null;
-		if ( ! $f || 'relation' !== $f['type'] ) {
+		if ( ! $f || 'relation' !== $f['type'] || mcc_is_private( $f ) ) {
 			return null;
 		}
 		$ids = mcc_related_ids( mcc_meta( $post_id, $first, $f ), $f );
@@ -339,13 +347,13 @@ function mcc_set( int $post_id, string $path, array $tests ): ?array {
 	[ $of, $by, $rest ] = array_pad( explode( '.', $path, 3 ), 3, '' );
 	$g                  = mcc_groups()[ $of ] ?? null;
 	if ( $g && $g['repeat'] && in_array( 'options', $g['on'], true ) && ! post_type_exists( $of ) ) {
-		$rows = array_values( array_filter( mcc_group_value( $of ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests ) ) );
+		$rows = array_values( array_filter( mcc_group_value( $of ), fn( $r ) => is_array( $r ) && mcc_where_row( $r, $tests, mcc_private_names( $g['fields'] ) ) ) );
 		return array( 'rows' => $rows, 'fields' => $g['fields'], 'rest' => rtrim( "$by.$rest", '.' ) );
 	}
 	$f                  = mcc_fields( $of )[ $by ] ?? null;
 	$posts              = array( 'post_type' => $of, 'post_status' => 'publish', 'has_password' => false, 'posts_per_page' => -1, 'fields' => 'ids' );
 	if ( $f && 'relation' === $f['type'] ) {
-		if ( ! $open ) {
+		if ( ! $open || mcc_is_private( $f ) ) {
 			return null;
 		}
 		$exclude = array();
